@@ -8,9 +8,7 @@
 
     <ItemGroup>
       <Folder Include="Configuration\" />
-      <Folder Include="DataServices\" />
       <Folder Include="Filters\" />
-      <Folder Include="Repositories\" />
       <Folder Include="Services\" />
     </ItemGroup>
 

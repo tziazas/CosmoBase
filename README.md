@@ -90,3 +90,41 @@ CosmoBase/                    ← repo root (matches your GitHub name)
   }
 }
 ```
+
+# How to use it
+
+```
+var builder = WebApplication.CreateBuilder(args);
+
+// 1) Bind from appsettings.json + allow code-side overrides:
+builder.Services.AddCosmoBase(
+  builder.Configuration.GetSection("Cosmos"),
+  config =>
+  {
+    // tweak or add a client on the fly:
+    config.CosmosClientConfigurations.Add(new CosmosClientConfiguration(
+      Name: "Emulator",
+      ConnectionString: builder.Configuration["CosmosEmulator"],
+      NumberOfWorkers: 4
+    ));
+  }
+);
+
+// — or —
+
+ // 2) Pure code configuration (no JSON at all):
+builder.Services.AddCosmoBase(config =>
+{
+  config.CosmosClientConfigurations.Add(
+    new CosmosClientConfiguration("Primary", "<connstr>", 8));
+  config.CosmosModelConfigurations.Add(
+    new CosmosModelConfiguration {
+      ModelName = "Product",
+      DatabaseName = "CatalogDb",
+      CollectionName = "Products",
+      PartitionKey = "/category",
+      ReadCosmosClientConfigurationName  = "Primary",
+      WriteCosmosClientConfigurationName = "Primary"
+    });
+});
+```
