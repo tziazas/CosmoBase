@@ -11,14 +11,7 @@ using Microsoft.Azure.Cosmos.Linq;
 
 namespace CosmoBase.Repositories;
 
-/// <summary>
-/// Repositories are only concerned with DAOs (Data Access Objects)
-/// and not DTOs (Data Transfer Objects)
-///
-/// Do NOT mix the two
-///
-/// </summary>
-/// <typeparam name="T"></typeparam>
+/// <inheritdoc/>
 public class CosmosRepository<T> : ICosmosRepository<T>
     where T : class
 {
@@ -101,42 +94,119 @@ public class CosmosRepository<T> : ICosmosRepository<T>
     }
 
     #region READ OPERATIONS
+
+    /// <inheritdoc/>
     public async IAsyncEnumerable<T> GetAll(
         [EnumeratorCancellation] CancellationToken cancellationToken
     )
     {
-        foreach (T item in Queryable.Where(x => ((ICosmosDataModel)x).IsDeleted == false))
-        {
-            if (cancellationToken.IsCancellationRequested)
-                break;
+        // build the LINQ query with the soft-delete filter
+        var linq = Queryable.Where(x => !((ICosmosDataModel)x).Deleted);
 
-            yield return item;
+        // turn it into an async feed iterator
+        using var feed = linq.ToFeedIterator();
+
+        while (feed.HasMoreResults)
+        {
+            // await for the next page
+            var page = await feed.ReadNextAsync(cancellationToken);
+
+            foreach (var item in page)
+            {
+                yield return item;
+            }
         }
     }
 
-    public IAsyncEnumerable<T> GetAll(
-        CancellationToken cancellationToken,
+    /// <summary>
+    /// Streams up to <paramref name="count"/> items from the container, skipping the first
+    /// <paramref name="offset"/> items and fetching in pages of <paramref name="limit"/> items.
+    /// </summary>
+    /// <param name="cancellationToken">
+    /// A token to observe for cancellation of the async stream.
+    /// </param>
+    /// <param name="limit">
+    /// The maximum number of items to request per page from the server.
+    /// </param>
+    /// <param name="offset">
+    /// The number of items to skip before beginning to yield results.
+    /// </param>
+    /// <param name="count">
+    /// The total number of items to yield before ending the stream.
+    /// </param>
+    /// <returns>
+    /// An async‐stream of items matching the query, in ascending order, after applying offset and limit.
+    /// </returns>
+    /// <remarks>
+    /// This implementation uses a SQL query with <c>OFFSET @offset LIMIT @limit</c> under the covers.  
+    /// **Be aware** that Cosmos DB still needs to scan through all <c>offset + limit</c> items on the server,  
+    /// charging you RUs for every row read (even those skipped). For deep pagination or large offsets,  
+    /// prefer using continuation-token paging: it resumes exactly where the last page left off and only  
+    /// incurs RUs for the items you actually read.  
+    /// </remarks>
+    public async IAsyncEnumerable<T> GetAll(
+        [EnumeratorCancellation] CancellationToken cancellationToken,
         int limit,
         int offset,
         int count
     )
     {
-        throw new NotImplementedException();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        if (count <= 0) yield break;
+
+        // Build the SQL query with OFFSET/LIMIT, filtering out soft-deleted items
+        const string sqlTemplate =
+            "SELECT * FROM c WHERE c.isDeleted = false OFFSET @offset LIMIT @pageLimit";
+        var queryDef = new QueryDefinition(sqlTemplate)
+            .WithParameter("@offset", offset)
+            .WithParameter("@pageLimit", limit);
+
+        // Create the feed iterator with a max‐item‐count for each server‐side page
+        var iterator = _readContainer.GetItemQueryIterator<T>(
+            queryDef,
+            requestOptions: new QueryRequestOptions { MaxItemCount = limit }
+        );
+
+        var remaining = count;
+        while (iterator.HasMoreResults && remaining > 0)
+        {
+            // Real async call under the retry policy
+            // var response = await _retryPolicy
+            //     .ExecuteAsync(() => iterator.ReadNextAsync(cancellationToken));
+            var response = await iterator.ReadNextAsync(cancellationToken);
+
+            foreach (var item in response)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    yield break;
+
+                yield return item;
+                remaining--;
+
+                if (remaining == 0)
+                    yield break;
+            }
+        }
     }
 
+    /// <inheritdoc/>
     public Task<T?> GetByIdAsync(string id)
     {
-        //var dao = Queryable.Where(x => ((ICosmosDataModel)x).Id == id).AsEnumerable();
         var dao = _readContainer
             .GetItemLinqQueryable<T?>()
-            .FirstOrDefault(x => ((ICosmosDataModel)x!).Id == id);
+            .Where(x => ((ICosmosDataModel)x!).Id == id);
 
-        // TODO - If we have more than one match we should probably throw an exception
-        // Do this here
+        if(!dao.Any())
+            return Task.FromResult<T?>(null);
+        
+        if(dao.Count() > 1)
+            throw new CosmosBaseException("Multiple records found for id: " + id);
 
-        return Task.FromResult(dao);
+        return Task.FromResult(dao.FirstOrDefault());
     }
 
+    /// <inheritdoc/>
     public async Task<T?> GetByIdAsync(string id, string partitionKey)
     {
         try
@@ -156,9 +226,12 @@ public class CosmosRepository<T> : ICosmosRepository<T>
             return null;
         }
     }
+
     #endregion
 
     #region WRITE OPERATIONS
+
+    /// <inheritdoc/>
     public async Task<T> AddAsync(ICosmosDataModel document)
     {
         if (document is null)
@@ -168,13 +241,14 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return (T)document;
     }
 
+    /// <inheritdoc/>
     public async Task<T> CreateAsync(ICosmosDataModel document)
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        document.CreatedDateTimeUtc = DateTime.UtcNow;
-        document.UpdatedDateTimeUtc = DateTime.UtcNow;
-        document.IsDeleted = false;
+        document.CreatedOnUtc = DateTime.UtcNow;
+        document.UpdatedOnUtc = DateTime.UtcNow;
+        document.Deleted = false;
 
         var partitionKey = document
             .GetType()
@@ -189,6 +263,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return (T)document;
     }
 
+    /// <inheritdoc/>
     public async Task DeleteAsync(string id, DeleteOptions deleteOptions)
     {
         switch (deleteOptions)
@@ -200,12 +275,13 @@ public class CosmosRepository<T> : ICosmosRepository<T>
                 var item = await GetByIdAsync(id);
                 if (item is null)
                     return;
-                ((ICosmosDataModel)item).IsDeleted = true;
+                ((ICosmosDataModel)item).Deleted = true;
                 await UpdateAsync((ICosmosDataModel)item);
                 return;
         }
     }
 
+    /// <inheritdoc/>
     public async Task DeleteAsync(string id, string partitionKey, DeleteOptions deleteOptions)
     {
         switch (deleteOptions)
@@ -217,17 +293,18 @@ public class CosmosRepository<T> : ICosmosRepository<T>
                 var item = await GetByIdAsync(id, partitionKey);
                 if (item is null)
                     return;
-                ((ICosmosDataModel)item).IsDeleted = true;
+                ((ICosmosDataModel)item).Deleted = true;
                 await UpdateAsync((ICosmosDataModel)item);
                 return;
         }
     }
 
+    /// <inheritdoc/>
     public async Task<T> UpdateAsync(ICosmosDataModel document)
     {
         ArgumentNullException.ThrowIfNull(document);
 
-        document.UpdatedDateTimeUtc = DateTime.UtcNow;
+        document.UpdatedOnUtc = DateTime.UtcNow;
 
         var partitionKey = document
             .GetType()
@@ -242,6 +319,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return response;
     }
 
+    /// <inheritdoc/>
     public async Task<List<T>> GetAllByPropertyAsync(string propertyName, string propertyValue)
     {
         var queryString =
@@ -267,13 +345,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return results;
     }
 
-    /// <summary>
-    /// Search for a value of a member in an array of objects
-    /// </summary>
-    /// <param name="arrayName"></param>
-    /// <param name="arrayPropertyName"></param>
-    /// <param name="propertyValue"></param>
-    /// <returns></returns>
+    /// <inheritdoc/>
     public async Task<List<T>> GetAllByArrayPropertyAsync(
         string arrayName,
         string arrayPropertyName,
@@ -341,6 +413,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return results;
     }
 
+    /// <inheritdoc/>
     public async IAsyncEnumerable<T> GetAll(
         [EnumeratorCancellation] CancellationToken cancellationToken,
         string partitionKey
@@ -367,6 +440,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         }
     }
 
+    /// <inheritdoc/>
     public async Task<List<T>> GetAllByPropertyComparisonAsync(List<PropertyFilter> propertyFilters)
     {
         // Start building the query string
@@ -427,6 +501,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return results;
     }
 
+    /// <inheritdoc/>
     public async Task<IList<T>> GetAllDistinctInListByPropertyAsync(
         CancellationToken cancellationToken,
         string propertyName,
@@ -453,6 +528,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
         return results;
     }
 
+    /// <inheritdoc/>
     public async IAsyncEnumerable<T> GetByQuery(
         [EnumeratorCancellation] CancellationToken cancellationToken,
         string query
@@ -471,5 +547,6 @@ public class CosmosRepository<T> : ICosmosRepository<T>
                 yield return item;
         }
     }
+
     #endregion
 }

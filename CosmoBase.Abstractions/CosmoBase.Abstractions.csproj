@@ -6,4 +6,10 @@
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
+    <!-- Enable XML doc generation in the .csproj so the comments are compiled into a .xml file alongside the DLL -->
+    <PropertyGroup>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);1591</NoWarn>  <!-- suppress “missing docs” if you need -->
+    </PropertyGroup>
+
 </Project>
