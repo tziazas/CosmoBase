@@ -201,7 +201,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
             return Task.FromResult<T?>(null);
         
         if(dao.Count() > 1)
-            throw new CosmosBaseException("Multiple records found for id: " + id);
+            throw new CosmoBaseException("Multiple records found for id: " + id);
 
         return Task.FromResult(dao.FirstOrDefault());
     }
@@ -235,7 +235,7 @@ public class CosmosRepository<T> : ICosmosRepository<T>
     public async Task<T> AddAsync(ICosmosDataModel document)
     {
         if (document is null)
-            throw new CosmosBaseException("Cannot add a model that is null");
+            throw new CosmoBaseException("Cannot add a model that is null");
 
         await _writeContainer.CreateItemAsync(document);
         return (T)document;
