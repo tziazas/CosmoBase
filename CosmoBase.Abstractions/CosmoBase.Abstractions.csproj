@@ -4,6 +4,13 @@
         <TargetFramework>net9.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <PackageId>CosmoBase.Abstractions</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>tziazas</Authors>
+        <Description>CosmoBase abstractions: DTOs, interfaces, enums.</Description>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/tziazas/CosmoBase.git</RepositoryUrl>
     </PropertyGroup>
 
     <!-- Enable XML doc generation in the .csproj so the comments are compiled into a .xml file alongside the DLL -->

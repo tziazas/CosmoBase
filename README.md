@@ -44,27 +44,59 @@ In `appsettings.json`:
 
 ```jsonc
 {
-  "Cosmos": {
+  "CosmoBase": {
     "CosmosClientConfigurations": [
       {
-        "Name":             "Primary",
-        "ConnectionString": "<YOUR_PRIMARY_CONNECTION_STRING>",
-        "NumberOfWorkers":  8
+        "Name": "Primary",
+        "ConnectionString": "AccountEndpoint=https://myaccount.documents.azure.com:443/;AccountKey=mykey==;",
+        "NumberOfWorkers": 10,
+        "AllowBulkExecution": true,
+        "ConnectionMode": "Direct",
+        "MaxRetryAttempts": 5,
+        "MaxRetryWaitTimeInSeconds": 30
       },
       {
-        "Name":             "ReadReplica",
-        "ConnectionString": "<YOUR_READ_REPLICA_CONNECTION_STRING>",
-        "NumberOfWorkers":  4
+        "Name": "Secondary",
+        "ConnectionString": "AccountEndpoint=https://myaccount-secondary.documents.azure.com:443/;AccountKey=mykey2==;",
+        "NumberOfWorkers": 5,
+        "AllowBulkExecution": false,
+        "ConnectionMode": "Gateway",
+        "MaxRetryAttempts": 3,
+        "MaxRetryWaitTimeInSeconds": 15
       }
     ],
     "CosmosModelConfigurations": [
       {
-        "ModelName":                      "Product",
-        "DatabaseName":                   "CatalogDb",
-        "CollectionName":                 "Products",
-        "PartitionKey":                   "/category",
-        "ReadCosmosClientConfigurationName":  "ReadReplica",
+        "ModelName": "Product",
+        "DatabaseName": "ProductCatalog",
+        "CollectionName": "Products",
+        "PartitionKey": "/category",
+        "ReadCosmosClientConfigurationName": "Primary",
         "WriteCosmosClientConfigurationName": "Primary"
+      },
+      {
+        "ModelName": "Order",
+        "DatabaseName": "OrderManagement",
+        "CollectionName": "Orders",
+        "PartitionKey": "/customerId",
+        "ReadCosmosClientConfigurationName": "Primary",
+        "WriteCosmosClientConfigurationName": "Primary"
+      },
+      {
+        "ModelName": "Customer",
+        "DatabaseName": "CustomerData",
+        "CollectionName": "Customers",
+        "PartitionKey": "/region",
+        "ReadCosmosClientConfigurationName": "Secondary",
+        "WriteCosmosClientConfigurationName": "Primary"
+      },
+      {
+        "ModelName": "AuditLog",
+        "DatabaseName": "AuditData",
+        "CollectionName": "AuditLogs",
+        "PartitionKey": "/date",
+        "ReadCosmosClientConfigurationName": "Secondary",
+        "WriteCosmosClientConfigurationName": "Secondary"
       }
     ]
   }
@@ -137,11 +169,15 @@ public class ProductService
 <details>
 <summary><strong>CosmosClientConfiguration</strong></summary>
 
-| Property           | Description                                  |
-| ------------------ | -------------------------------------------- |
-| `Name`             | Unique name for this client configuration    |
-| `ConnectionString` | Cosmos DB connection string                  |
-| `NumberOfWorkers`  | Degree of parallelism for bulk operations     |
+| Property                      | Type      | Description                                                                                          | Default |
+| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------- | ------- |
+| `Name`                        | `string`  | Unique name for this client configuration                                                           | Required |
+| `ConnectionString`            | `string`  | Cosmos DB connection string                                                                          | Required |
+| `NumberOfWorkers`             | `int`     | Degree of parallelism for bulk operations (1-100)                                                   | Required |
+| `AllowBulkExecution`          | `bool?`   | Enable bulk operations for better throughput                                                         | `true` |
+| `ConnectionMode`              | `string?` | Connection mode: "Direct" or "Gateway". Direct is faster, Gateway works better through firewalls    | `"Direct"` |
+| `MaxRetryAttempts`            | `int?`    | Maximum retry attempts for rate-limited requests (0-20)                                             | `9` |
+| `MaxRetryWaitTimeInSeconds`   | `int?`    | Maximum wait time in seconds for retries (1-300)                                                    | `30` |
 
 </details>
 
@@ -162,6 +198,232 @@ public class ProductService
 ---
 
 ## 🔧 Advanced Usage
+
+### Configuration Options
+
+CosmoBase provides multiple ways to configure your services:
+
+#### Method 1: Using Default Configuration Section
+
+The simplest approach - reads from the "CosmoBase" section in your configuration:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Add CosmoBase using default "CosmoBase" configuration section
+builder.Services.AddCosmoBase(builder.Configuration);
+
+var app = builder.Build();
+```
+
+#### Method 2: Using Default Configuration Section with Options Override
+
+Read from configuration but override specific settings:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Add CosmoBase with configuration overrides
+builder.Services.AddCosmoBase(builder.Configuration, options =>
+{
+    // Override specific settings after configuration binding
+    options.CosmosClientConfigurations[0].MaxRetryAttempts = 10;
+    options.CosmosClientConfigurations[0].AllowBulkExecution = true;
+});
+
+var app = builder.Build();
+```
+
+#### Method 3: Using Custom Configuration Section
+
+Use a different configuration section name:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Add CosmoBase from a custom configuration section
+builder.Services.AddCosmoBase(
+    builder.Configuration.GetSection("MyCosmosSettings")
+);
+
+var app = builder.Build();
+```
+
+#### Method 4: Using Custom Configuration Section with Options Override
+
+Custom section with overrides:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Add CosmoBase from custom section with overrides
+builder.Services.AddCosmoBase(
+    builder.Configuration.GetSection("MyCosmosSettings"),
+    options =>
+    {
+        // Add an additional model configuration
+        var newModel = new CosmosModelConfiguration
+        {
+            ModelName = "Analytics",
+            DatabaseName = "AnalyticsDb",
+            CollectionName = "Events",
+            PartitionKey = "/eventType",
+            ReadCosmosClientConfigurationName = "Analytics",
+            WriteCosmosClientConfigurationName = "Analytics"
+        };
+        options.CosmosModelConfigurations.Add(newModel);
+    }
+);
+
+var app = builder.Build();
+```
+
+#### Method 5: Fully Programmatic Configuration
+
+Configure everything in code without using appsettings:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Add CosmoBase with fully programmatic configuration
+builder.Services.AddCosmoBase(options =>
+{
+    // Configure Cosmos clients
+    options.CosmosClientConfigurations = new List<CosmosClientConfiguration>
+    {
+        new()
+        {
+            Name = "Primary",
+            ConnectionString = builder.Configuration["CosmosDb:PrimaryConnection"],
+            NumberOfWorkers = 10,
+            AllowBulkExecution = true,
+            ConnectionMode = "Direct",
+            MaxRetryAttempts = 5,
+            MaxRetryWaitTimeInSeconds = 30
+        }
+    };
+    
+    // Configure model mappings
+    options.CosmosModelConfigurations = new List<CosmosModelConfiguration>
+    {
+        new()
+        {
+            ModelName = "Product",
+            DatabaseName = "ProductCatalog",
+            CollectionName = "Products",
+            PartitionKey = "/category",
+            ReadCosmosClientConfigurationName = "Primary",
+            WriteCosmosClientConfigurationName = "Primary"
+        },
+        new()
+        {
+            ModelName = "Order",
+            DatabaseName = "OrderManagement",
+            CollectionName = "Orders",
+            PartitionKey = "/customerId",
+            ReadCosmosClientConfigurationName = "Primary",
+            WriteCosmosClientConfigurationName = "Primary"
+        }
+    };
+});
+
+var app = builder.Build();
+```
+
+### Console Application Example
+
+For non-web applications:
+
+```csharp
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+var builder = Host.CreateApplicationBuilder(args);
+
+// Configure from appsettings.json
+builder.Services.AddCosmoBase(builder.Configuration);
+
+// Or configure programmatically
+builder.Services.AddCosmoBase(options =>
+{
+    options.CosmosClientConfigurations = new List<CosmosClientConfiguration>
+    {
+        new()
+        {
+            Name = "Default",
+            ConnectionString = args[0], // From command line
+            NumberOfWorkers = 5,
+            AllowBulkExecution = true
+        }
+    };
+    
+    options.CosmosModelConfigurations = new List<CosmosModelConfiguration>
+    {
+        new()
+        {
+            ModelName = "MyDocument",
+            DatabaseName = "MyDatabase",
+            CollectionName = "MyContainer",
+            PartitionKey = "/id",
+            ReadCosmosClientConfigurationName = "Default",
+            WriteCosmosClientConfigurationName = "Default"
+        }
+    };
+});
+
+var host = builder.Build();
+await host.RunAsync();
+```
+
+### Testing Example
+
+For unit tests with custom configuration:
+
+```csharp
+[TestClass]
+public class CosmosTests
+{
+    private ServiceProvider _serviceProvider;
+    
+    [TestInitialize]
+    public void Setup()
+    {
+        var services = new ServiceCollection();
+        
+        // Configure for testing
+        services.AddCosmoBase(options =>
+        {
+            options.CosmosClientConfigurations = new List<CosmosClientConfiguration>
+            {
+                new()
+                {
+                    Name = "Test",
+                    ConnectionString = "AccountEndpoint=https://localhost:8081/;AccountKey=testkey",
+                    NumberOfWorkers = 1,
+                    AllowBulkExecution = false,
+                    ConnectionMode = "Gateway" // Use Gateway for emulator
+                }
+            };
+            
+            options.CosmosModelConfigurations = new List<CosmosModelConfiguration>
+            {
+                new()
+                {
+                    ModelName = "TestDocument",
+                    DatabaseName = "TestDb",
+                    CollectionName = "TestContainer",
+                    PartitionKey = "/pk",
+                    ReadCosmosClientConfigurationName = "Test",
+                    WriteCosmosClientConfigurationName = "Test"
+                }
+            };
+        });
+        
+        _serviceProvider = services.BuildServiceProvider();
+    }
+}
+```
 
 ### Direct Repository Access
 
@@ -219,7 +481,7 @@ catch (CosmoBaseException ex)
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache License](LICENSE).
 
 ---
 
@@ -230,5 +492,5 @@ Contributions, issues, and feature requests are welcome! Please open an issue or
 ---
 
 <p align="center">
-  Made with ❤️ and 🚀 by tziazas
+  Made with ❤️ and 🚀 by Achilleas Tziazas
 </p>
