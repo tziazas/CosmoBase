@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Runtime.CompilerServices;
 using CosmoBase.Abstractions.Configuration;
@@ -5,10 +6,12 @@ using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
+using CosmoBase.Abstractions.Models;
 using CosmoBase.Extensions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Fluent;
 using Microsoft.Azure.Cosmos.Linq;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Retry;
@@ -37,21 +40,30 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         || ex.StatusCode == HttpStatusCode.ServiceUnavailable
         || ex.StatusCode == HttpStatusCode.InternalServerError;
 
+    private readonly CosmosClient _readClient;
+    private readonly CosmosClient _writeClient;
     private readonly Container _readContainer;
     private readonly Container _writeContainer;
     private readonly string _partitionKeyProperty;
     private readonly ILogger<CosmosRepository<T>> _logger;
-    //private readonly TelemetryClient _telemetryClient;
+    private readonly IMemoryCache _cache;
+    private readonly ICosmosValidator<T> _validator;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance using <paramref name="configuration"/> to locate containers.
     /// </summary>
     /// <param name="configuration">Cosmos DB configuration settings.</param>
     /// <param name="logger">The logger for this repository</param>
+    /// <param name="cache">The memory cache for count queries</param>
+    /// <param name="validator">Generic Cosmos Validator</param>
     /// <exception cref="CosmosConfigurationException">Thrown if configuration for <typeparamref name="T"/> is missing.</exception>
-    public CosmosRepository(CosmosConfiguration configuration, ILogger<CosmosRepository<T>> logger)
+    public CosmosRepository(CosmosConfiguration configuration, ILogger<CosmosRepository<T>> logger, IMemoryCache cache,
+        ICosmosValidator<T> validator)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _validator = validator;
 
         // Item‐level retry (Create/Read/Replace/Upsert/Delete/Patch)
         _cosmosRetryPolicy =
@@ -96,7 +108,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
                         new("model", typeof(T).Name),
                         new("operation", "FeedOperation")
                     );
-                    
+
                     _logger.LogWarning(
                         exception,
                         "Cosmos {Operation} retry {RetryCount} after {Delay}",
@@ -106,7 +118,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
                     );
                 }
             );
-        
+
         // Transactional‐batch retry (BulkUpsert/BulkInsert)
         _cosmosBatchRetryPolicy = Policy<TransactionalBatchResponse>
             .Handle<CosmosException>(IsTransient)
@@ -166,27 +178,30 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             throw new CosmosConfigurationException($"No write client config for {modelName}");
         }
 
-        var readClient = new CosmosClientBuilder(readClientConfig.ConnectionString)
+        _readClient = new CosmosClientBuilder(readClientConfig.ConnectionString)
             .WithThrottlingRetryOptions(TimeSpan.FromSeconds(15), 10000)
             .WithBulkExecution(true)
             .Build();
-        _readContainer = readClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+        _readContainer = _readClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
 
-        var writeClient = new CosmosClientBuilder(writeClientConfig.ConnectionString)
+        _writeClient = new CosmosClientBuilder(writeClientConfig.ConnectionString)
             .WithThrottlingRetryOptions(TimeSpan.FromSeconds(15), 10000)
             .WithBulkExecution(true)
             .Build();
-        _writeContainer = writeClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+        _writeContainer = _writeClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
     }
 
     /// <inheritdoc/>
     public IQueryable<T> Queryable => _readContainer.GetItemLinqQueryable<T>(true);
 
     /// <inheritdoc/>
-    public async Task<T?> GetItemAsync(string id, string partitionKey, CancellationToken cancellationToken = default)
+    public async Task<T?> GetItemAsync(string id, string partitionKey, bool includeDeleted = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            _validator.ValidateIdAndPartitionKey(id, partitionKey, "GetItem");
+
             var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
                 _readContainer.ReadItemAsync<T>(
                     id,
@@ -202,10 +217,24 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
                 response.Diagnostics
             );
 
-            return response.Resource;
+            var item = response.Resource;
+
+            // Apply soft delete filter unless explicitly requested to include deleted items
+            if (!includeDeleted && item.Deleted)
+            {
+                _logger.LogDebug(
+                    "GetItemAsync: Item {Id} found but is soft-deleted, returning null (includeDeleted={IncludeDeleted})",
+                    id,
+                    includeDeleted
+                );
+                return null;
+            }
+
+            return item;
         }
         catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
+            _logger.LogDebug("GetItemAsync: Item {Id} not found in partition {PartitionKey}", id, partitionKey);
             return null;
         }
     }
@@ -217,7 +246,9 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         item.UpdatedOnUtc = DateTime.UtcNow;
         item.Deleted = false;
 
-        // 2a) Execute under retry policy
+        _validator.ValidateDocument(item, "Create", _partitionKeyProperty);
+
+        // Execute under retry policy
         var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
             _writeContainer.CreateItemAsync(
                 item,
@@ -226,13 +257,15 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             )
         );
 
-        // 2b) Log RU charge and diagnostics
+        // Log RU charge and diagnostics
         _logger.LogInformation(
             "CreateItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
             response.Resource.Id,
             response.RequestCharge,
             response.Diagnostics
         );
+
+        InvalidateCountCache(GetPartitionKeyValue(item));
 
         return response.Resource;
     }
@@ -286,6 +319,12 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             response.Diagnostics
         );
 
+        // Check if this was a create operation (201) vs replace operation (200) before invalidating the cache
+        if (response.StatusCode == HttpStatusCode.Created)
+        {
+            InvalidateCountCache(GetPartitionKeyValue(item));
+        }
+
         return response.Resource;
     }
 
@@ -299,6 +338,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         if (deleteOptions == DeleteOptions.SoftDelete)
         {
             await SoftDeleteAsync(id, partitionKey, cancellationToken);
+            InvalidateCountCache(partitionKey);
             return;
         }
 
@@ -318,11 +358,13 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             response.RequestCharge,
             response.Diagnostics
         );
+
+        InvalidateCountCache(partitionKey);
     }
 
     private async Task SoftDeleteAsync(string id, string partitionKey, CancellationToken cancellationToken)
     {
-        var item = await GetItemAsync(id, partitionKey, cancellationToken);
+        var item = await GetItemAsync(id, partitionKey, true, cancellationToken);
         if (item is null) return;
         item.Deleted = true;
         await ReplaceItemAsync(item, cancellationToken);
@@ -439,37 +481,178 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <inheritdoc/>
     public async Task<int> GetCountAsync(string partitionKey, CancellationToken cancellationToken = default)
     {
-        var sql = $"SELECT VALUE COUNT(1) FROM c WHERE c.{_partitionKeyProperty} = @pk";
+        // Add the missing soft delete filter!
+        var sql = $"SELECT VALUE COUNT(1) FROM c WHERE c.{_partitionKeyProperty} = @pk AND c.Deleted = false";
         var def = new QueryDefinition(sql)
             .WithParameter("@pk", partitionKey);
 
-        var iterator = _readContainer.GetItemQueryIterator<int>(
-            def,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(partitionKey) }
-        );
+        var options = new QueryRequestOptions
+        {
+            PartitionKey = new PartitionKey(partitionKey),
+            MaxItemCount = 1 // We only expect one result
+        };
 
-        // execute under retry policy
+        var iterator = _readContainer.GetItemQueryIterator<int>(def, requestOptions: options);
+
         var response = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<int>>(
             (_, ct) => iterator.ReadNextAsync(ct),
             new Context("GetCount"),
             cancellationToken
         );
 
-        // record RU charge in histogram
         CosmosRepositoryMetrics.RequestCharge.Record(
             response.RequestCharge,
-            new("model", typeof(T).Name),
-            new("operation", "GetCount")
-        );
-
-        _logger.LogInformation(
-            "GetCountAsync: Partition {PartitionKey} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
-            partitionKey,
-            response.RequestCharge,
-            response.Diagnostics
+            new KeyValuePair<string, object?>("model", typeof(T).Name),
+            new KeyValuePair<string, object?>("operation", "GetCount")
         );
 
         return response.FirstOrDefault();
+    }
+
+    /// <inheritdoc/>
+    public async Task<int> GetTotalCountAsync(string partitionKey, CancellationToken cancellationToken = default)
+    {
+        // Add the missing soft delete filter!
+        var sql = $"SELECT VALUE COUNT(1) FROM c WHERE c.{_partitionKeyProperty} = @pk";
+        var def = new QueryDefinition(sql)
+            .WithParameter("@pk", partitionKey);
+
+        var options = new QueryRequestOptions
+        {
+            PartitionKey = new PartitionKey(partitionKey),
+            MaxItemCount = 1 // We only expect one result
+        };
+
+        var iterator = _readContainer.GetItemQueryIterator<int>(def, requestOptions: options);
+
+        var response = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<int>>(
+            (_, ct) => iterator.ReadNextAsync(ct),
+            new Context("GetCount"),
+            cancellationToken
+        );
+
+        CosmosRepositoryMetrics.RequestCharge.Record(
+            response.RequestCharge,
+            new KeyValuePair<string, object?>("model", typeof(T).Name),
+            new KeyValuePair<string, object?>("operation", "GetCount")
+        );
+
+        return response.FirstOrDefault();
+    }
+
+    /// <inheritdoc/>
+    public async Task<int> GetCountWithCacheAsync(string partitionKey, int cacheExpiryMinutes,
+        CancellationToken cancellationToken = default)
+    {
+        _validator.ValidatePartitionKey(partitionKey, "GetCountWithCache");
+        _validator.ValidateCacheExpiry(cacheExpiryMinutes);
+
+        // Generate unique cache key for this model type + partition
+        var cacheKey = $"count_{typeof(T).Name}_{partitionKey}";
+
+        // If cache expiry is 0, always bypass cache
+        if (cacheExpiryMinutes == 0)
+        {
+            _logger.LogDebug("Cache bypass requested for count query on partition {PartitionKey}", partitionKey);
+            return await GetFreshCountAsync(partitionKey, cacheKey, cancellationToken);
+        }
+
+        // Check if we have cached data
+        if (_cache.TryGetValue(cacheKey, out CachedCountEntry? cachedEntry) && cachedEntry != null)
+        {
+            var age = DateTime.UtcNow - cachedEntry.CachedAt;
+            var expiryThreshold = TimeSpan.FromMinutes(cacheExpiryMinutes);
+
+            if (age <= expiryThreshold)
+            {
+                _logger.LogDebug(
+                    "Returning cached count {Count} for partition {PartitionKey} (age: {Age:mm\\:ss})",
+                    cachedEntry.Count,
+                    partitionKey,
+                    age
+                );
+
+                // Record cache hit metric
+                CosmosRepositoryMetrics.CacheHitCount.Add(1,
+                    new KeyValuePair<string, object?>("model", typeof(T).Name),
+                    new KeyValuePair<string, object?>("operation", "GetCountCache")
+                );
+
+                return cachedEntry.Count;
+            }
+
+            _logger.LogDebug(
+                "Cached count for partition {PartitionKey} expired (age: {Age:mm\\:ss} > threshold: {Threshold:mm\\:ss})",
+                partitionKey,
+                age,
+                expiryThreshold
+            );
+        }
+        else
+        {
+            _logger.LogDebug("No cached count found for partition {PartitionKey}", partitionKey);
+        }
+
+        // Cache miss or expired - get fresh count
+        return await GetFreshCountAsync(partitionKey, cacheKey, cancellationToken);
+    }
+
+    /// <summary>
+    /// Performs a fresh COUNT query and updates the cache with the result.
+    /// </summary>
+    private async Task<int> GetFreshCountAsync(string partitionKey, string cacheKey,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogDebug("Executing fresh count query for partition {PartitionKey}", partitionKey);
+
+        // Record cache miss metric
+        CosmosRepositoryMetrics.CacheMissCount.Add(1,
+            new KeyValuePair<string, object?>("model", typeof(T).Name),
+            new KeyValuePair<string, object?>("operation", "GetCountCache")
+        );
+
+        // Get fresh count using existing method
+        var count = await GetCountAsync(partitionKey, cancellationToken);
+
+        // Cache the result with absolute expiration (we'll check age manually)
+        var cacheEntry = new CachedCountEntry
+        {
+            Count = count,
+            CachedAt = DateTime.UtcNow
+        };
+
+        // Set cache with generous absolute expiration (we handle expiry manually)
+        var cacheOptions = new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24), // Generous fallback
+            Priority = CacheItemPriority.Normal,
+            Size = 1 // Simple size for cache pressure management
+        };
+
+        _cache.Set(cacheKey, cacheEntry, cacheOptions);
+
+        _logger.LogInformation(
+            "Cached fresh count {Count} for partition {PartitionKey}",
+            count,
+            partitionKey
+        );
+
+        return count;
+    }
+
+    /// <summary>
+    /// Invalidates the cached count for a specific partition.
+    /// Call this after operations that change document counts (create, delete, bulk operations).
+    /// </summary>
+    /// <param name="partitionKey">The partition key whose cache should be invalidated.</param>
+    public void InvalidateCountCache(string partitionKey)
+    {
+        if (string.IsNullOrEmpty(partitionKey)) return;
+
+        var cacheKey = $"count_{typeof(T).Name}_{partitionKey}";
+        _cache.Remove(cacheKey);
+
+        _logger.LogDebug("Invalidated count cache for partition {PartitionKey}", partitionKey);
     }
 
     /// <inheritdoc/>
@@ -579,9 +762,20 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         string arrayName,
         string elementPropertyName,
         object elementPropertyValue,
+        bool includeDeleted = false,
         CancellationToken cancellationToken = default)
     {
-        var sql = $"SELECT * FROM c WHERE ARRAY_CONTAINS(c.{arrayName}, {{ '{elementPropertyName}': @value }})";
+        _validator.ValidateArrayPropertyQuery(arrayName, elementPropertyName, elementPropertyValue);
+
+        // Build the SQL query with conditional soft delete filter
+        var whereClause = $"ARRAY_CONTAINS(c.{arrayName}, {{ '{elementPropertyName}': @value }})";
+
+        if (!includeDeleted)
+        {
+            whereClause += " AND c.Deleted = false";
+        }
+
+        var sql = $"SELECT * FROM c WHERE {whereClause}";
         var def = new QueryDefinition(sql)
             .WithParameter("@value", elementPropertyValue);
 
@@ -590,14 +784,14 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         while (iterator.HasMoreResults)
         {
-            // 1) read next page under retry policy
+            // Read next page under retry policy
             var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
                 (_, ct) => iterator.ReadNextAsync(ct),
                 new Context("GetPage"),
                 cancellationToken
             );
 
-            // 2) record RU charge
+            // Record RU charge
             CosmosRepositoryMetrics.RequestCharge.Record(
                 page.RequestCharge,
                 new("model", typeof(T).Name),
@@ -605,9 +799,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             );
 
             _logger.LogInformation(
-                "GetAllByArrayPropertyAsync: returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                "GetAllByArrayPropertyAsync: returned {Count} items; consumed {RequestCharge} RUs; includeDeleted={IncludeDeleted}; Diagnostics: {Diagnostics}",
                 page.Count,
                 page.RequestCharge,
+                includeDeleted,
                 page.Diagnostics
             );
 
@@ -620,13 +815,32 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <inheritdoc/>
     public async Task<List<T>> GetAllByPropertyComparisonAsync(
         IEnumerable<PropertyFilter> filters,
+        bool includeDeleted = false,
         CancellationToken cancellationToken = default)
     {
-        // materialize filters
+        // Materialize filters
         var filterList = filters as IReadOnlyCollection<PropertyFilter> ?? filters.ToList();
 
-        // build SQL + parameters
+        _validator.ValidatePropertyFilters(filterList);
+
+        // Build SQL + parameters from the property filters
         var sql = filterList.BuildSqlWhereClause();
+
+        // Add soft delete filter if needed
+        if (!includeDeleted)
+        {
+            // If there are existing filters, combine with AND
+            if (filterList.Any())
+            {
+                sql += " AND c.Deleted = false";
+            }
+            else
+            {
+                // No other filters, just the soft delete filter
+                sql = "SELECT * FROM c WHERE c.Deleted = false";
+            }
+        }
+
         var def = new QueryDefinition(sql);
         filterList.AddParameters(def);
 
@@ -635,14 +849,14 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         while (iterator.HasMoreResults)
         {
-            // execute under retry
+            // Execute under retry
             var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
                 (_, ct) => iterator.ReadNextAsync(ct),
                 new Context("GetPage"),
                 cancellationToken
             );
 
-            // record RU charge
+            // Record RU charge
             CosmosRepositoryMetrics.RequestCharge.Record(
                 page.RequestCharge,
                 new("model", typeof(T).Name),
@@ -650,9 +864,11 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             );
 
             _logger.LogInformation(
-                "GetAllByPropertyComparisonAsync: returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                "GetAllByPropertyComparisonAsync: returned {Count} items; consumed {RequestCharge} RUs; includeDeleted={IncludeDeleted}; filterCount={FilterCount}; Diagnostics: {Diagnostics}",
                 page.Count,
                 page.RequestCharge,
+                includeDeleted,
+                filterList.Count,
                 page.Diagnostics
             );
 
@@ -663,103 +879,179 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <inheritdoc/>
-    public Task BulkUpsertAsync(IEnumerable<T> items, string partitionKeyValue, int batchSize = 100,
+    public async Task BulkUpsertAsync(IEnumerable<T> items, string partitionKeyValue, int batchSize = 100,
         int maxConcurrency = 10, CancellationToken cancellationToken = default)
-        => BulkExecuteAsync(items, partitionKeyValue, batchSize, maxConcurrency,
-            (batch, item) => { batch.UpsertItem(item); }, cancellationToken);
+    {
+        // Materialize items ONCE at the beginning
+        var itemList = items.ToList() ?? throw new ArgumentNullException(nameof(items));
+
+        // Pass the materialized collection to validator and BulkExecuteAsync
+        _validator.ValidateBulkItems(itemList, partitionKeyValue, _partitionKeyProperty, "BulkUpsert");
+        _validator.ValidateBulkOperationParameters(batchSize, maxConcurrency);
+
+        try
+        {
+            var result = await BulkExecuteAsync(itemList, partitionKeyValue, batchSize, maxConcurrency,
+                (batch, item) => { batch.UpsertItem(item); }, cancellationToken);
+
+            _logger.LogInformation(
+                "BulkUpsertAsync completed successfully: {SuccessCount} items processed, {TotalRUs} RUs consumed",
+                result.SuccessfulItems.Count,
+                result.TotalRequestUnits
+            );
+
+            // Only invalidate cache after successful completion
+            InvalidateCountCache(partitionKeyValue);
+        }
+        catch (CosmoBaseException ex) when (ex.Data.Contains("BulkResult"))
+        {
+            // Re-throw with more context for bulk upsert
+            var result = (BulkExecuteResult<T>)ex.Data["BulkResult"]!;
+
+            _logger.LogError(
+                "BulkUpsertAsync partially failed: {SuccessCount} succeeded, {FailedCount} failed, {TotalRUs} RUs consumed",
+                result.SuccessfulItems.Count,
+                result.FailedItems.Count,
+                result.TotalRequestUnits
+            );
+
+            // Still invalidate cache if some items succeeded (count may have changed)
+            if (result.SuccessfulItems.Any())
+            {
+                InvalidateCountCache(partitionKeyValue);
+            }
+
+            // Create a more specific exception for upsert failures
+            var upsertException = new CosmoBaseException(
+                $"Bulk upsert operation failed: {result.FailedItems.Count} out of {result.SuccessfulItems.Count + result.FailedItems.Count} items failed"
+            )
+            {
+                Data =
+                {
+                    ["BulkUpsertResult"] = result
+                }
+            };
+            throw upsertException;
+        }
+    }
 
     /// <inheritdoc/>
-    public Task BulkInsertAsync(IEnumerable<T> items, string partitionKeyValue, int batchSize = 100,
+    public async Task BulkInsertAsync(IEnumerable<T> items, string partitionKeyValue, int batchSize = 100,
         int maxConcurrency = 10, CancellationToken cancellationToken = default)
-        => BulkExecuteAsync(items, partitionKeyValue, batchSize, maxConcurrency,
-            (batch, item) => { batch.CreateItem(item); }, cancellationToken);
+    {
+        // Materialize items ONCE at the beginning
+        var itemList = items.ToList() ?? throw new ArgumentNullException(nameof(items));
 
+        // Pass the materialized collection to validator and BulkExecuteAsync
+        _validator.ValidateBulkItems(itemList, partitionKeyValue, _partitionKeyProperty, "BulkInsert");
+        _validator.ValidateBulkOperationParameters(batchSize, maxConcurrency);
+
+        try
+        {
+            var result = await BulkExecuteAsync(itemList, partitionKeyValue, batchSize, maxConcurrency,
+                (batch, item) => { batch.CreateItem(item); }, cancellationToken);
+
+            _logger.LogInformation(
+                "BulkInsertAsync completed successfully: {SuccessCount} items processed, {TotalRUs} RUs consumed",
+                result.SuccessfulItems.Count,
+                result.TotalRequestUnits
+            );
+
+            // Only invalidate cache after successful completion
+            InvalidateCountCache(partitionKeyValue);
+        }
+        catch (CosmoBaseException ex) when (ex.Data.Contains("BulkResult"))
+        {
+            // Re-throw with more context for bulk insert
+            var result = (BulkExecuteResult<T>)ex.Data["BulkResult"]!;
+
+            _logger.LogError(
+                "BulkInsertAsync partially failed: {SuccessCount} succeeded, {FailedCount} failed, {TotalRUs} RUs consumed",
+                result.SuccessfulItems.Count,
+                result.FailedItems.Count,
+                result.TotalRequestUnits
+            );
+
+            // Still invalidate cache if some items succeeded (count increased)
+            if (result.SuccessfulItems.Any())
+            {
+                InvalidateCountCache(partitionKeyValue);
+            }
+
+            // Create a more specific exception for insert failures
+            var insertException = new CosmoBaseException(
+                $"Bulk insert operation failed: {result.FailedItems.Count} out of {result.SuccessfulItems.Count + result.FailedItems.Count} items failed"
+            )
+            {
+                Data =
+                {
+                    ["BulkInsertResult"] = result
+                }
+            };
+            throw insertException;
+        }
+    }
 
     /// <summary>
-    /// Executes batch operations (upsert/create) in parallel groups.
+    /// Executes batch operations (upsert/create) in parallel groups with comprehensive error handling.
     /// </summary>
-    /// <param name="items">Items to process.</param>
+    /// <param name="items">Items to process (already materialized).</param>
     /// <param name="partitionKeyValue">Partition key for all items.</param>
     /// <param name="batchSize">Number of items per batch.</param>
     /// <param name="maxConcurrency">Max parallel batches.</param>
     /// <param name="batchAction">Action to apply per item on the transactional batch.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    private async Task BulkExecuteAsync(
-        IEnumerable<T> items,
+    /// <returns>Results indicating success/failure for each item.</returns>
+    /// <exception cref="CosmoBaseException">Thrown when batch operations fail.</exception>
+    private async Task<BulkExecuteResult<T>> BulkExecuteAsync(
+        IReadOnlyCollection<T> items, // Changed from IEnumerable<T> to IReadOnlyCollection<T>
         string partitionKeyValue,
         int batchSize,
         int maxConcurrency,
         Action<TransactionalBatch, T> batchAction,
         CancellationToken cancellationToken = default)
     {
-        if (items == null) throw new ArgumentNullException(nameof(items));
-        if (string.IsNullOrEmpty(partitionKeyValue)) throw new ArgumentNullException(nameof(partitionKeyValue));
-        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
-        if (maxConcurrency <= 0) throw new ArgumentOutOfRangeException(nameof(maxConcurrency));
+        // Note: Validation is done by the public methods (BulkUpsertAsync/BulkInsertAsync)
+        // Items are already materialized and validated
 
-        // 1) Split items into fixed-size batches
-        var batches = new List<List<T>>();
-        var currentBatch = new List<T>(batchSize);
-        foreach (var item in items)
+        if (!items.Any())
         {
-            currentBatch.Add(item);
-            if (currentBatch.Count == batchSize)
-            {
-                batches.Add(currentBatch);
-                currentBatch = new List<T>(batchSize);
-            }
+            _logger.LogDebug("BulkExecuteAsync: No items to process");
+            return new BulkExecuteResult<T>
+                { SuccessfulItems = new List<T>(), FailedItems = new List<BulkItemFailure<T>>() };
         }
 
-        if (currentBatch.Count > 0)
-            batches.Add(currentBatch);
+        // Convert to list for indexing (items is already materialized, so this is cheap)
+        var itemList = items as List<T> ?? items.ToList();
 
-        // 2) Execute each batch under a throttle
-        var semaphore = new SemaphoreSlim(maxConcurrency);
-        var tasks = new List<Task>(batches.Count);
+        // Split items into batches
+        var batches = CreateBatches(itemList, batchSize);
+        _logger.LogInformation("BulkExecuteAsync: Processing {ItemCount} items in {BatchCount} batches",
+            itemList.Count, batches.Count);
 
-        foreach (var batch in batches)
+        // Process batches with controlled concurrency
+        var results = await ProcessBatchesConcurrently(batches, partitionKeyValue, batchAction, maxConcurrency,
+            cancellationToken);
+
+        // Aggregate results
+        var aggregatedResult = AggregateBatchResults(results);
+
+        _logger.LogInformation(
+            "BulkExecuteAsync: Completed. Success: {SuccessCount}, Failed: {FailedCount}, Total RUs: {TotalRUs}",
+            aggregatedResult.SuccessfulItems.Count,
+            aggregatedResult.FailedItems.Count,
+            aggregatedResult.TotalRequestUnits
+        );
+
+        // Throw if there were any failures
+        if (aggregatedResult.FailedItems.Any())
         {
-            await semaphore.WaitAsync(cancellationToken);
-
-            tasks.Add(Task.Run(async () =>
-            {
-                try
-                {
-                    var txn = _writeContainer.CreateTransactionalBatch(new PartitionKey(partitionKeyValue));
-                    foreach (var item in batch)
-                    {
-                        batchAction(txn, item);
-                        item.UpdatedOnUtc = DateTime.UtcNow;
-                    }
-
-                    // execute with retry
-                    var batchResponse = await _cosmosBatchRetryPolicy.ExecuteAsync(() =>
-                        txn.ExecuteAsync(cancellationToken)
-                    );
-
-                    // record RU charge
-                    CosmosRepositoryMetrics.RequestCharge.Record(
-                        batchResponse.RequestCharge,
-                        new("model", typeof(T).Name),
-                        new("operation", "BulkExecute")
-                    );
-
-                    // log RU charge + diagnostics
-                    _logger.LogInformation(
-                        "BulkExecuteAsync: batch consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
-                        batchResponse.RequestCharge,
-                        batchResponse.Diagnostics
-                    );
-                }
-                finally
-                {
-                    semaphore.Release();
-                }
-            }, cancellationToken));
+            var failureMessage =
+                $"Bulk operation completed with {aggregatedResult.FailedItems.Count} failures out of {itemList.Count} items";
+            throw new CosmoBaseException(failureMessage) { Data = { ["BulkResult"] = aggregatedResult } };
         }
 
-        // 3) Wait for all batches to complete
-        await Task.WhenAll(tasks.ToArray());
+        return aggregatedResult;
     }
 
     /// <inheritdoc/>
@@ -813,16 +1105,193 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         return raw.ToString()!;
     }
 
-    /*
-    private async Task<ItemResponse<T>> ExecWithMetricsAsync(
-        Func<Task<ItemResponse<T>>> call, string operation)
+    /// <summary>
+    /// Splits items into fixed-size batches.
+    /// </summary>
+    private static List<List<T>> CreateBatches(IList<T> items, int batchSize)
     {
-        var resp = await _itemPolicy.ExecuteAsync(call);
-        SRequestChargeHist.Record(resp.RequestCharge,
-            new("model", typeof(T).Name), new("operation", operation));
-        _logger.LogInformation("{Op} consumed {RequestCharge} RUs. Diagnostics: {Diag}",
-            operation, resp.RequestCharge, resp.Diagnostics);
-        return resp;
+        var batches = new List<List<T>>();
+
+        for (var i = 0; i < items.Count; i += batchSize)
+        {
+            var batch = items.Skip(i).Take(batchSize).ToList();
+            batches.Add(batch);
+        }
+
+        return batches;
     }
-    */
+
+    /// <summary>
+    /// Processes batches concurrently with controlled parallelism.
+    /// </summary>
+    private async Task<List<BatchExecuteResult<T>>> ProcessBatchesConcurrently(
+        List<List<T>> batches,
+        string partitionKeyValue,
+        Action<TransactionalBatch, T> batchAction,
+        int maxConcurrency,
+        CancellationToken cancellationToken)
+    {
+        var results = new ConcurrentBag<BatchExecuteResult<T>>();
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = maxConcurrency,
+            CancellationToken = cancellationToken
+        };
+
+        await Parallel.ForEachAsync(
+            batches.Select((batch, index) => new { Batch = batch, Index = index }),
+            parallelOptions,
+            async (batchItem, ct) =>
+            {
+                var result = await ExecuteSingleBatch(batchItem.Batch, batchItem.Index, partitionKeyValue, batchAction,
+                    ct);
+                results.Add(result);
+            });
+
+        return results.ToList();
+    }
+
+    /// <summary>
+    /// Executes a single batch with detailed error handling.
+    /// </summary>
+    private async Task<BatchExecuteResult<T>> ExecuteSingleBatch(
+        List<T> batch,
+        int batchIndex,
+        string partitionKeyValue,
+        Action<TransactionalBatch, T> batchAction,
+        CancellationToken cancellationToken)
+    {
+        var result = new BatchExecuteResult<T> { BatchIndex = batchIndex };
+
+        try
+        {
+            // Set audit fields for all items in batch
+            foreach (var item in batch)
+            {
+                item.UpdatedOnUtc = DateTime.UtcNow;
+            }
+
+            // Create transactional batch
+            var txn = _writeContainer.CreateTransactionalBatch(new PartitionKey(partitionKeyValue));
+            foreach (var item in batch)
+            {
+                batchAction(txn, item);
+            }
+
+            // Execute with retry policy
+            var batchResponse = await _cosmosBatchRetryPolicy.ExecuteAsync(() =>
+                txn.ExecuteAsync(cancellationToken)
+            );
+
+            result.RequestUnits = batchResponse.RequestCharge;
+
+            // Check overall batch success
+            if (batchResponse.IsSuccessStatusCode)
+            {
+                result.SuccessfulItems.AddRange(batch);
+                _logger.LogDebug(
+                    "Batch {BatchIndex}: {ItemCount} items succeeded, {RequestCharge} RUs consumed",
+                    batchIndex,
+                    batch.Count,
+                    batchResponse.RequestCharge
+                );
+            }
+            else
+            {
+                // Batch failed - analyze individual item results
+                AnalyzeBatchFailures(batch, batchResponse, result);
+            }
+
+            // Record metrics
+            CosmosRepositoryMetrics.RequestCharge.Record(
+                batchResponse.RequestCharge,
+                new("model", typeof(T).Name),
+                new("operation", "BulkExecute"),
+                new("batch_status", batchResponse.IsSuccessStatusCode ? "success" : "failed")
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Batch {BatchIndex}: Exception during execution", batchIndex);
+
+            // Mark all items in batch as failed
+            foreach (var item in batch)
+            {
+                result.FailedItems.Add(new BulkItemFailure<T>
+                {
+                    Item = item,
+                    StatusCode = null,
+                    ErrorMessage = ex.Message,
+                    Exception = ex
+                });
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Analyzes individual item failures within a failed batch.
+    /// </summary>
+    private void AnalyzeBatchFailures(List<T> batch, TransactionalBatchResponse batchResponse,
+        BatchExecuteResult<T> result)
+    {
+        for (var i = 0; i < batch.Count; i++)
+        {
+            var item = batch[i];
+            var itemResponse = batchResponse[i];
+
+            if (itemResponse.IsSuccessStatusCode)
+            {
+                result.SuccessfulItems.Add(item);
+            }
+            else
+            {
+                result.FailedItems.Add(new BulkItemFailure<T>
+                {
+                    Item = item,
+                    StatusCode = itemResponse.StatusCode,
+                    ErrorMessage = $"Batch operation failed with status: {itemResponse.StatusCode}",
+                    Exception = null
+                });
+
+                _logger.LogWarning(
+                    "Batch item failed: Id={ItemId}, Status={StatusCode}",
+                    item.Id,
+                    itemResponse.StatusCode
+                );
+            }
+        }
+    }
+
+    /// <summary>
+    /// Aggregates results from multiple batch executions.
+    /// </summary>
+    private static BulkExecuteResult<T> AggregateBatchResults(List<BatchExecuteResult<T>> batchResults)
+    {
+        var result = new BulkExecuteResult<T>();
+
+        foreach (var batchResult in batchResults)
+        {
+            result.SuccessfulItems.AddRange(batchResult.SuccessfulItems);
+            result.FailedItems.AddRange(batchResult.FailedItems);
+            result.TotalRequestUnits += batchResult.RequestUnits;
+        }
+
+        return result;
+    }
+
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            // Dispose managed resources
+            _readClient.Dispose();
+            _writeClient.Dispose();
+
+            _disposed = true;
+        }
+
+        GC.SuppressFinalize(this);
+    }
 }

@@ -25,4 +25,18 @@ internal static class CosmosRepositoryMetrics
             "cosmos.retry_count",
             unit: "count",
             description: "Number of Cosmos retries");
+    
+    // Counter for cache hits
+    public static readonly Counter<long> CacheHitCount =
+        Meter.CreateCounter<long>(
+            "cosmos.cache_hit_count",
+            unit: "count",
+            description: "Number of cache hits for count queries");
+
+    // Counter for cache misses
+    public static readonly Counter<long> CacheMissCount =
+        Meter.CreateCounter<long>(
+            "cosmos.cache_miss_count",
+            unit: "count",
+            description: "Number of cache misses for count queries");
 }
