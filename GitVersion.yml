@@ -1,0 +1,18 @@
+mode: ContinuousDeployment
+branches:
+  main:
+    regex: ^main$
+    increment: Patch
+    prevent-increment-of-merged-branch-version: true
+  feature:
+    regex: ^features?[/-]
+    increment: Patch
+    is-source-branch-for:
+      - main
+  pull-request:
+    regex: ^(pull|pull\-request|pr)[/-]
+    increment: Patch
+    is-source-branch-for:
+      - main
+ignore:
+  sha: []

@@ -18,5 +18,11 @@
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn>  <!-- suppress “missing docs” if you need -->
     </PropertyGroup>
+    <ItemGroup>
+      <PackageReference Include="GitVersion.MsBuild" Version="6.3.0">
+        <PrivateAssets>all</PrivateAssets>
+        <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      </PackageReference>
+    </ItemGroup>
 
 </Project>
