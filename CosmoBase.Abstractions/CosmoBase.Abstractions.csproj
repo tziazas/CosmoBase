@@ -9,7 +9,7 @@
         <Version>1.0.0</Version>
         <Authors>tziazas</Authors>
         <Description>CosmoBase abstractions: DTOs, interfaces, enums.</Description>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/tziazas/CosmoBase.git</RepositoryUrl>
     </PropertyGroup>
 
