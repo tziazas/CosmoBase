@@ -1,0 +1,89 @@
+<Project>
+    <PropertyGroup>
+        <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>
+        <!-- Force specific .NET runtime -->
+        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">$(MSBuildThisFileDirectory)..\packages\gitversion.msbuild\6.3.0\tools\net8.0\GitVersion.MsBuild.dll</GitVersionTaskAssembly>
+        <!-- Disable GitVersion during design-time builds -->
+        <GitVersion_NoFallback Condition="'$(DesignTimeBuild)' == 'true'">true</GitVersion_NoFallback>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
+        <PackageReference Include="GitVersion.MsBuild" Version="6.3.0">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+    </ItemGroup>
+</Project>
+
+        <!--
+        // Had to consult Claude to fix a compatibility issue for GitVersion.MSBuild.
+        
+        Root Cause of the Original Problem
+        **********************************
+        
+        The error occurred because GitVersion.MsBuild 6.3.0 ships with a .NET 8.0 tool (gitversion.dll) but your
+        projects target .NET 9.0. When MSBuild tried to execute the GitVersion tool, there was a runtime compatibility
+        issue between the .NET 8.0 tool and the .NET 9.0 project context.
+        
+        
+        How This Solution Fixes It
+        **************************
+        
+        1. GitVersionTaskAssembly Property
+        
+        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">
+            $(MSBuildThisFileDirectory)..\packages\gitversion.msbuild\6.3.0\tools\net8.0\GitVersion.MsBuild.dll
+        </GitVersionTaskAssembly>
+        
+        What it does: This explicitly tells MSBuild which GitVersion assembly to load and execute.
+        Why it helps: Instead of letting MSBuild auto-discover and potentially mishandle the GitVersion tool, you're
+        explicitly pointing it to the correct .NET 8.0 version of the GitVersion.MsBuild.dll.
+        
+        The Condition="'$(MSBuildRuntimeType)' == 'Core'" ensures this only applies when running under .NET Core
+        (not .NET Framework).
+        
+        2. GitVersion_NoFallback for Design-Time Builds
+        
+        <GitVersion_NoFallback Condition="'$(DesignTimeBuild)' == 'true'">
+            true
+        </GitVersion_NoFallback>
+        
+        What it does: Disables GitVersion during design-time builds (when your IDE is analyzing the project for
+        IntelliSense, etc.).
+        
+        Why it helps: Design-time builds happen frequently in the background and don't need version information.
+        By skipping GitVersion during these builds, you avoid unnecessary tool execution and potential compatibility
+        issues in the IDE context.
+        
+        3. Conditional Package Reference
+        
+        <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
+        
+        What it does: Only includes the GitVersion package reference during actual builds, not design-time builds.
+        Why it helps: This prevents the IDE from trying to load and process GitVersion when it's just doing background
+        analysis, reducing the surface area for compatibility issues.
+        
+        
+        Why This Works vs. the Original Approach
+        ****************************************
+        
+        Original approach: MSBuild was trying to auto-discover and execute GitVersion, which led to runtime version
+        conflicts between .NET 8.0 (GitVersion tool) and .NET 9.0 (your project).
+        
+        This solution: You're explicitly controlling:
+            Which assembly to use (the correct .NET 8.0 version)
+            When to use it (only during real builds, not design-time)
+            How to handle fallbacks (disable them during design-time builds)
+        
+        This gives you precise control over the GitVersion execution environment, avoiding the automatic detection that
+        was causing the compatibility issues.
+        
+        
+        The Key Insight
+        ***************
+        
+        The fundamental issue was that GitVersion.MsBuild's automatic discovery mechanism wasn't handling the
+        .NET 8.0 tool → .NET 9.0 project boundary correctly. By explicitly specifying the assembly path and controlling
+        when GitVersion runs, you've bypassed the problematic auto-discovery logic entirely.
+        
+        -->
