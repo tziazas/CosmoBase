@@ -141,8 +141,8 @@ public static class ServiceCollectionExtensions
         // E) Repositories & DataServices
         // Change 4: Using TryAdd pattern
         services.TryAddScoped(typeof(ICosmosRepository<>), typeof(CosmosRepository<>));
-        services.TryAddScoped(typeof(IDataReadService<>), typeof(CosmosDataReadService<,>));
-        services.TryAddScoped(typeof(IDataWriteService<>), typeof(CosmosDataWriteService<,>));
+        services.TryAddScoped(typeof(IDataReadService<,>), typeof(CosmosDataReadService<,>));
+        services.TryAddScoped(typeof(IDataWriteService<,>), typeof(CosmosDataWriteService<,>));
 
         return services;
     }

@@ -14,10 +14,12 @@
         <RepositoryType>git</RepositoryType>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <PackageTags>CosmosDb;Azure;Bulk;Paging;Repository;DataServices</PackageTags>
+        
+        <!-- Tell GitVersion to walk up and find the .git folder -->
+        <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>
     </PropertyGroup>
 
     <ItemGroup>
-      <Folder Include="Extensions\" />
       <Folder Include="Filters\" />
       <Folder Include="Services\" />
     </ItemGroup>
@@ -35,6 +37,7 @@
       <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.6" />
       <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.6" />
       <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.6" />
+      <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.6" />
       <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.6" />
       <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.6" />
       <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="9.0.6" />

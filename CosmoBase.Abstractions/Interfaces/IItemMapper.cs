@@ -41,4 +41,23 @@ public interface IItemMapper<TDao, TDto>
     /// </returns>
     IEnumerable<TDto> FromDaos(IEnumerable<TDao> daos)
         => daos.Select(FromDao);
+    
+    /// <summary>
+    /// Asynchronously maps a stream of DAOs into DTOs.
+    /// </summary>
+    /// <param name="daos">An async‐stream of DAOs.</param>
+    /// <returns>An async‐stream of DTOs produced by mapping each DAO.</returns>
+    IAsyncEnumerable<TDto> FromDaosAsync(IAsyncEnumerable<TDao> daos)
+    {
+        if (daos is null) throw new ArgumentNullException(nameof(daos));
+        return Core();
+
+        async IAsyncEnumerable<TDto> Core()
+        {
+            await foreach (var dao in daos.ConfigureAwait(false))
+            {
+                yield return FromDao(dao);
+            }
+        }
+    }
 }

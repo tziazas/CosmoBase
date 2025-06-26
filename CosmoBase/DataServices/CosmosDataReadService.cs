@@ -1,129 +1,133 @@
 using System.Runtime.CompilerServices;
+using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
 
 namespace CosmoBase.DataServices;
 
-public class CosmosDataReadService<TDto, TDao>(
-    ICosmosRepository<TDao> cosmosRepository,
-    IItemMapper<TDao, TDto> mapper
-) : IDataReadService<TDto>
-    where TDao : class, new()
+/// <summary>
+/// Concrete implementation of <see cref="ICosmosDataReadService{T}"/> using an underlying <see cref="ICosmosRepository{TDao}"/> and <see cref="IItemMapper{TDao,TDto}"/>.
+/// </summary>
+/// <typeparam name="TDto">The DTO type returned to callers.</typeparam>
+/// <typeparam name="TDao">The DAO type stored in Cosmos DB.</typeparam>
+public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto>
+    where TDao : class, ICosmosDataModel, new()
     where TDto : class, new()
 {
-    public async IAsyncEnumerable<TDto> GetAllAsyncEnumerable(
-        [EnumeratorCancellation] CancellationToken cancellationToken
-    )
+    private readonly ICosmosRepository<TDao> _cosmosRepository;
+    private readonly IItemMapper<TDao, TDto> _mapper;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CosmosDataReadService{TDto,TDao}"/> class.
+    /// </summary>
+    /// <param name="cosmosRepository">The underlying repository for DAO operations.</param>
+    /// <param name="mapper">The mapper to translate between DAO and DTO.</param>
+    public CosmosDataReadService(
+        ICosmosRepository<TDao> cosmosRepository,
+        IItemMapper<TDao, TDto> mapper)
     {
-        await foreach (var dao in cosmosRepository.GetAll(cancellationToken))
+        _cosmosRepository = cosmosRepository ?? throw new ArgumentNullException(nameof(cosmosRepository));
+        _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        return _mapper.FromDaosAsync(_cosmosRepository
+            .GetAllAsync(cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public Task<TDto?> GetByIdAsync(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        throw new CosmoBaseException($"Cosmos does not support delete operations without a partition key : {id}");
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<TDto> QueryAsync(
+        ISpecification<TDto> specification,
+        CancellationToken cancellationToken = default)
+    {
+        if (specification is not SqlSpecification<TDto> sqlSpecification)
+            throw new ArgumentException("Specification is not a SqlSpecification", nameof(specification));
+
+        var daoSpecification =
+            new SqlSpecification<TDao>(sqlSpecification.QueryText, sqlSpecification.Parameters?.ToDictionary());
+        return _mapper.FromDaosAsync(_cosmosRepository
+            .QueryAsync(daoSpecification, cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<List<TDto>> BulkReadAsyncEnumerable(
+        ISpecification<TDto> specification,
+        string partitionKey,
+        int batchSize = 100,
+        int maxConcurrency = 50,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (specification is not SqlSpecification<TDto> sqlSpecification)
+            throw new ArgumentException("Specification is not a SqlSpecification", nameof(specification));
+
+        var daoSpecification = new SqlSpecification<TDao>(sqlSpecification.QueryText,
+            sqlSpecification.Parameters?.ToDictionary());
+
+        await foreach (var daoBatch in _cosmosRepository
+                           .BulkReadAsyncEnumerable(daoSpecification, partitionKey, batchSize, maxConcurrency,
+                               cancellationToken))
         {
-            yield return mapper.FromDao(dao);
+            yield return _mapper.FromDaos(daoBatch).ToList();
         }
     }
 
-    public async IAsyncEnumerable<TDto> GetAllAsyncEnumerable(
-        [EnumeratorCancellation] CancellationToken cancellationToken,
-        int limit,
-        int offset,
-        int count
-    )
+    /// <inheritdoc />
+    public Task<int> GetCountAsync(
+        string partitionKeyValue,
+        CancellationToken cancellationToken = default)
+        => _cosmosRepository.GetCountAsync(partitionKeyValue, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<(IList<TDto> Items, string? ContinuationToken)> GetPageWithTokenAsync(
+        ISpecification<TDto> specification,
+        string partitionKey,
+        int pageSize,
+        string? continuationToken = null,
+        CancellationToken cancellationToken = default)
     {
-        await foreach (var dao in cosmosRepository.GetAll(cancellationToken))
-        {
-            yield return mapper.FromDao(dao);
-        }
-    }
+        if (specification is not SqlSpecification<TDto> sqlSpecification)
+            throw new ArgumentException("Specification is not a SqlSpecification", nameof(specification));
 
-    public async IAsyncEnumerable<TDto> GetAllAsyncEnumerable(
-        [EnumeratorCancellation] CancellationToken cancellationToken,
-        string partitionKey
-    )
-    {
-        await foreach (var dao in cosmosRepository.GetAll(cancellationToken, partitionKey))
-        {
-            yield return mapper.FromDao(dao);
-        }
-    }
-
-    public async Task<IList<TDto>> GetAllByArrayPropertyAsync(
-        CancellationToken cancellationToken,
-        string arrayName,
-        string arrayPropertyName,
-        string propertyValue
-    )
-    {
-        return mapper.FromDaos(
-            await cosmosRepository.GetAllByArrayPropertyAsync(
-                arrayName,
-                arrayPropertyName,
-                propertyValue
-            )
-        ).ToList();
-    }
-
-    public async Task<IList<TDto>> GetAllByPropertyAsync(
-        CancellationToken cancellationToken,
-        string propertyName,
-        string propertyValue
-    )
-    {
-        return mapper.FromDaos(
-            await cosmosRepository.GetAllByPropertyAsync(propertyName, propertyValue)
-        ).ToList();
-    }
-
-    public async Task<IList<TDto>> GetAllByPropertyComparisonAsync(
-        CancellationToken cancellationToken,
-        List<PropertyFilter> propertyFilters
-    )
-    {
-        return mapper.FromDaos(
-            await cosmosRepository.GetAllByPropertyComparisonAsync(propertyFilters)
-        ).ToList();
-    }
-
-    public async Task<IList<TDto>> GetAllDistinctInListByPropertyAsync(
-        CancellationToken cancellationToken,
-        string propertyName,
-        List<string> propertyValueList
-    )
-    {
-        var data = await cosmosRepository.GetAllDistinctInListByPropertyAsync(
-            cancellationToken,
-            propertyName,
-            propertyValueList
-        );
-
-        return mapper.FromDaos(data).ToList();
-    }
-
-    public async Task<TDto?> GetByIdAsync(string id)
-    {
-        var dao = await cosmosRepository.GetByIdAsync(id);
-
-        // Here we don't cast, we actually want to use IMapper
-        return dao == null ? null : mapper.FromDao(dao);
-    }
-
-    public async Task<TDto?> GetByIdAsync(string id, string partitionKey)
-    {
-        var dao = await cosmosRepository.GetByIdAsync(id, partitionKey);
+        var daoSpecification = new SqlSpecification<TDao>(sqlSpecification.QueryText,
+            sqlSpecification.Parameters?.ToDictionary());
         
-        return dao == null ? null : mapper.FromDao(dao);
+        var (daoItems, token) = await _cosmosRepository
+            .GetPageWithTokenAsync(daoSpecification, partitionKey, pageSize, continuationToken, cancellationToken);
+
+        var dtoItems = _mapper.FromDaos(daoItems);
+
+        return (dtoItems.ToList(), token);
     }
 
-    public async IAsyncEnumerable<TDto> GetByQuery(
-        [EnumeratorCancellation] CancellationToken cancellationToken,
-        string query
-    )
+    /// <inheritdoc />
+    public async Task<(IList<TDto> Items, string? ContinuationToken, int? TotalCount)> GetPageWithTokenAndCountAsync(
+        ISpecification<TDto> specification,
+        string partitionKey,
+        int pageSize,
+        string? continuationToken = null,
+        CancellationToken cancellationToken = default)
     {
-        var items = cosmosRepository.GetByQuery(cancellationToken, query);
-        await foreach (var dao in items)
-        {
-            if (cancellationToken.IsCancellationRequested)
-                break;
+        if (specification is not SqlSpecification<TDto> sqlSpecification)
+            throw new ArgumentException("Specification is not a SqlSpecification", nameof(specification));
 
-            yield return mapper.FromDao(dao);
-        }
+        var daoSpecification = new SqlSpecification<TDao>(sqlSpecification.QueryText,
+            sqlSpecification.Parameters?.ToDictionary());
+        
+        var (daoItems, token, totalCount) = await _cosmosRepository
+            .GetPageWithTokenAndCountAsync(daoSpecification, partitionKey, pageSize, continuationToken, cancellationToken);
+
+        var dtoItems = _mapper.FromDaos(daoItems);
+
+        return (dtoItems.ToList(), token, totalCount);
     }
 }

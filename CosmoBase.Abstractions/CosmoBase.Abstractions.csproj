@@ -11,6 +11,9 @@
         <Description>CosmoBase abstractions: DTOs, interfaces, enums.</Description>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/tziazas/CosmoBase.git</RepositoryUrl>
+
+        <!-- Tell GitVersion to walk up and find the .git folder -->
+        <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>
     </PropertyGroup>
 
     <!-- Enable XML doc generation in the .csproj so the comments are compiled into a .xml file alongside the DLL -->
@@ -18,11 +21,12 @@
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn>  <!-- suppress “missing docs” if you need -->
     </PropertyGroup>
+    
     <ItemGroup>
-      <PackageReference Include="GitVersion.MsBuild" Version="6.3.0">
-        <PrivateAssets>all</PrivateAssets>
-        <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      </PackageReference>
+        <PackageReference Include="GitVersion.MsBuild" Version="6.3.0">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
     </ItemGroup>
 
 </Project>

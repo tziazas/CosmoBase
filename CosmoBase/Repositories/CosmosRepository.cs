@@ -1,552 +1,828 @@
-using System.Linq.Expressions;
+using System.Net;
 using System.Runtime.CompilerServices;
 using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
+using CosmoBase.Extensions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Fluent;
 using Microsoft.Azure.Cosmos.Linq;
+using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.Retry;
 
 namespace CosmoBase.Repositories;
 
-/// <inheritdoc/>
-public class CosmosRepository<T> : ICosmosRepository<T>
-    where T : class
+/// <summary>
+/// Provides low-level CRUD and query operations against a Cosmos DB container.
+/// Use higher-level services for business logic and DTO mapping.
+/// </summary>
+/// <typeparam name="T">The document model type stored in Cosmos, must implement <see cref="ICosmosDataModel"/> and have a parameterless constructor.</typeparam>
+public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmosDataModel, new()
 {
-    // Dependency Injection
-    protected readonly CosmosConfiguration CosmosConfiguration;
+    // Define a static retry policy for transient CosmosExceptions
+    private readonly AsyncRetryPolicy<ItemResponse<T>> _cosmosRetryPolicy;
 
-    // Queryable to use for executing custom queries
-    public IQueryable<T> Queryable => _readContainer.GetItemLinqQueryable<T>(true);
+    // Define a static retry policy for feed-iterator pages
+    private readonly IAsyncPolicy _cosmosFeedRetryPolicy;
 
-    // Container for model
+    // Define a static retry policy for transactional batch calls
+    private readonly AsyncRetryPolicy<TransactionalBatchResponse> _cosmosBatchRetryPolicy;
+
+    private static bool IsTransient(CosmosException ex) =>
+        ex.StatusCode == HttpStatusCode.RequestTimeout
+        || ex.StatusCode == HttpStatusCode.TooManyRequests
+        || ex.StatusCode == HttpStatusCode.ServiceUnavailable
+        || ex.StatusCode == HttpStatusCode.InternalServerError;
+
     private readonly Container _readContainer;
     private readonly Container _writeContainer;
     private readonly string _partitionKeyProperty;
-
-    public CosmosRepository(CosmosConfiguration cosmosConfiguration)
-    {
-        this.CosmosConfiguration = cosmosConfiguration;
-
-        // From the configuration we now grab the model config for the name of the model
-        var modelName = typeof(T).Name;
-
-        var modelConfig = cosmosConfiguration
-            .CosmosModelConfigurations
-            .FirstOrDefault(x => x.ModelName.Equals(modelName, StringComparison.InvariantCultureIgnoreCase));
-
-        if (modelConfig == null)
-            throw new CosmosConfigurationException($"No configuration found for model {modelName}");
-
-        this._partitionKeyProperty = modelConfig.PartitionKey;
-
-        // Find the read and write clients for this model
-        var readClientConfig = cosmosConfiguration
-            .CosmosClientConfigurations
-            .FirstOrDefault(x => x.Name.Equals(
-                modelConfig.ReadCosmosClientConfigurationName,
-                StringComparison.CurrentCultureIgnoreCase
-            ));
-        if (readClientConfig == null)
-            throw new CosmosConfigurationException(
-                $"Cannot find the Cosmos client for read operations for model {modelName}"
-            );
-
-        var writeClientConfig = cosmosConfiguration
-            .CosmosClientConfigurations
-            .FirstOrDefault(x => x.Name.Equals(
-                modelConfig.WriteCosmosClientConfigurationName,
-                StringComparison.CurrentCultureIgnoreCase
-            ));
-        if (writeClientConfig == null)
-            throw new CosmosConfigurationException(
-                $"Cannot find the Cosmos client for write operations for model {modelName}"
-            );
-
-        // Create the clients
-        var clientBuilder = new CosmosClientBuilder(readClientConfig.ConnectionString);
-        var cosmosReadClient = clientBuilder
-            .WithThrottlingRetryOptions(
-                maxRetryWaitTimeOnThrottledRequests: TimeSpan.FromSeconds(15),
-                maxRetryAttemptsOnThrottledRequests: 10000
-            )
-            .WithBulkExecution(true)
-            .Build();
-        _readContainer = cosmosReadClient.GetContainer(
-            modelConfig.DatabaseName,
-            modelConfig.CollectionName
-        );
-
-        clientBuilder = new CosmosClientBuilder(writeClientConfig.ConnectionString);
-        var cosmosWriteClient = clientBuilder
-            .WithThrottlingRetryOptions(
-                maxRetryWaitTimeOnThrottledRequests: TimeSpan.FromSeconds(15),
-                maxRetryAttemptsOnThrottledRequests: 10000
-            )
-            .WithBulkExecution(true)
-            .Build();
-        _writeContainer = cosmosWriteClient.GetContainer(
-            modelConfig.DatabaseName,
-            modelConfig.CollectionName
-        );
-    }
-
-    #region READ OPERATIONS
-
-    /// <inheritdoc/>
-    public async IAsyncEnumerable<T> GetAll(
-        [EnumeratorCancellation] CancellationToken cancellationToken
-    )
-    {
-        // build the LINQ query with the soft-delete filter
-        var linq = Queryable.Where(x => !((ICosmosDataModel)x).Deleted);
-
-        // turn it into an async feed iterator
-        using var feed = linq.ToFeedIterator();
-
-        while (feed.HasMoreResults)
-        {
-            // await for the next page
-            var page = await feed.ReadNextAsync(cancellationToken);
-
-            foreach (var item in page)
-            {
-                yield return item;
-            }
-        }
-    }
+    private readonly ILogger<CosmosRepository<T>> _logger;
+    //private readonly TelemetryClient _telemetryClient;
 
     /// <summary>
-    /// Streams up to <paramref name="count"/> items from the container, skipping the first
-    /// <paramref name="offset"/> items and fetching in pages of <paramref name="limit"/> items.
+    /// Initializes a new instance using <paramref name="configuration"/> to locate containers.
     /// </summary>
-    /// <param name="cancellationToken">
-    /// A token to observe for cancellation of the async stream.
-    /// </param>
-    /// <param name="limit">
-    /// The maximum number of items to request per page from the server.
-    /// </param>
-    /// <param name="offset">
-    /// The number of items to skip before beginning to yield results.
-    /// </param>
-    /// <param name="count">
-    /// The total number of items to yield before ending the stream.
-    /// </param>
-    /// <returns>
-    /// An async‐stream of items matching the query, in ascending order, after applying offset and limit.
-    /// </returns>
-    /// <remarks>
-    /// This implementation uses a SQL query with <c>OFFSET @offset LIMIT @limit</c> under the covers.  
-    /// **Be aware** that Cosmos DB still needs to scan through all <c>offset + limit</c> items on the server,  
-    /// charging you RUs for every row read (even those skipped). For deep pagination or large offsets,  
-    /// prefer using continuation-token paging: it resumes exactly where the last page left off and only  
-    /// incurs RUs for the items you actually read.  
-    /// </remarks>
-    public async IAsyncEnumerable<T> GetAll(
-        [EnumeratorCancellation] CancellationToken cancellationToken,
-        int limit,
-        int offset,
-        int count
-    )
+    /// <param name="configuration">Cosmos DB configuration settings.</param>
+    /// <param name="logger">The logger for this repository</param>
+    /// <exception cref="CosmosConfigurationException">Thrown if configuration for <typeparamref name="T"/> is missing.</exception>
+    public CosmosRepository(CosmosConfiguration configuration, ILogger<CosmosRepository<T>> logger)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
-        ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        if (count <= 0) yield break;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        // Build the SQL query with OFFSET/LIMIT, filtering out soft-deleted items
-        const string sqlTemplate =
-            "SELECT * FROM c WHERE c.isDeleted = false OFFSET @offset LIMIT @pageLimit";
-        var queryDef = new QueryDefinition(sqlTemplate)
-            .WithParameter("@offset", offset)
-            .WithParameter("@pageLimit", limit);
+        // Item‐level retry (Create/Read/Replace/Upsert/Delete/Patch)
+        _cosmosRetryPolicy =
+            Policy<ItemResponse<T>>
+                .Handle<CosmosException>(IsTransient)
+                .WaitAndRetryAsync(
+                    retryCount: 3,
+                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                    onRetry: (outcome, delay, retryCount, context) =>
+                    {
+                        // outcome.Exception is the actual CosmosException
+                        var ex = outcome.Exception!;
 
-        // Create the feed iterator with a max‐item‐count for each server‐side page
-        var iterator = _readContainer.GetItemQueryIterator<T>(
-            queryDef,
-            requestOptions: new QueryRequestOptions { MaxItemCount = limit }
-        );
+                        // increment retry counter
+                        CosmosRepositoryMetrics.RetryCount.Add(
+                            1,
+                            new("model", typeof(T).Name),
+                            new("operation", "ItemOperation")
+                        );
 
-        var remaining = count;
-        while (iterator.HasMoreResults && remaining > 0)
-        {
-            // Real async call under the retry policy
-            // var response = await _retryPolicy
-            //     .ExecuteAsync(() => iterator.ReadNextAsync(cancellationToken));
-            var response = await iterator.ReadNextAsync(cancellationToken);
+                        _logger.LogWarning(
+                            ex,
+                            "Cosmos {Operation} retry {RetryCount} after {Delay}",
+                            context.OperationKey ?? "ItemOperation",
+                            retryCount,
+                            delay
+                        );
+                    }
+                );
 
-            foreach (var item in response)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    yield break;
-
-                yield return item;
-                remaining--;
-
-                if (remaining == 0)
-                    yield break;
-            }
-        }
-    }
-
-    /// <inheritdoc/>
-    public Task<T?> GetByIdAsync(string id)
-    {
-        var dao = _readContainer
-            .GetItemLinqQueryable<T?>()
-            .Where(x => ((ICosmosDataModel)x!).Id == id);
-
-        if(!dao.Any())
-            return Task.FromResult<T?>(null);
+        // FeedIterator‐level retry (GetAllAsync, QueryAsync, paging, etc.)
+        _cosmosFeedRetryPolicy = Policy
+            .Handle<CosmosException>(IsTransient)
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt)),
+                onRetry: (exception, delay, retryCount, context) =>
+                {
+                    // exception is the actual CosmosException
+                    CosmosRepositoryMetrics.RetryCount.Add(
+                        1,
+                        new("model", typeof(T).Name),
+                        new("operation", "FeedOperation")
+                    );
+                    
+                    _logger.LogWarning(
+                        exception,
+                        "Cosmos {Operation} retry {RetryCount} after {Delay}",
+                        context.OperationKey ?? "FeedOperation",
+                        retryCount,
+                        delay
+                    );
+                }
+            );
         
-        if(dao.Count() > 1)
-            throw new CosmoBaseException("Multiple records found for id: " + id);
+        // Transactional‐batch retry (BulkUpsert/BulkInsert)
+        _cosmosBatchRetryPolicy = Policy<TransactionalBatchResponse>
+            .Handle<CosmosException>(IsTransient)
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt)),
+                onRetry: (outcome, delay, retryCount, context) =>
+                {
+                    var ex = outcome.Exception!;
 
-        return Task.FromResult(dao.FirstOrDefault());
+                    CosmosRepositoryMetrics.RetryCount.Add(
+                        1,
+                        new("model", typeof(T).Name),
+                        new("operation", "BulkOperation")
+                    );
+
+                    _logger.LogWarning(
+                        ex,
+                        "Cosmos {Operation} retry {RetryCount} after {Delay}",
+                        context.OperationKey ?? "BulkOperation",
+                        retryCount,
+                        delay
+                    );
+                }
+            );
+
+        // Models/Containers
+        var modelName = typeof(T).Name;
+        var modelConfig = configuration.CosmosModelConfigurations
+            .FirstOrDefault(x => x.ModelName.Equals(modelName, StringComparison.InvariantCultureIgnoreCase));
+        if (modelConfig == null)
+        {
+            _logger.LogError("CosmosConfiguration: no model configuration found for {ModelName}", modelName);
+            throw new CosmosConfigurationException($"No model configuration found for {modelName}");
+        }
+
+        _partitionKeyProperty = modelConfig.PartitionKey;
+
+        var readClientConfig = configuration.CosmosClientConfigurations
+            .FirstOrDefault(x => x.Name.Equals(modelConfig.ReadCosmosClientConfigurationName,
+                StringComparison.InvariantCultureIgnoreCase));
+        if (readClientConfig == null)
+        {
+            _logger.LogError("CosmosConfiguration: no read client config named {ReadConfigName} for model {ModelName}",
+                modelConfig.ReadCosmosClientConfigurationName, modelName);
+            throw new CosmosConfigurationException($"No read client config for {modelName}");
+        }
+
+        var writeClientConfig = configuration.CosmosClientConfigurations
+            .FirstOrDefault(x => x.Name.Equals(modelConfig.WriteCosmosClientConfigurationName,
+                StringComparison.InvariantCultureIgnoreCase));
+        if (writeClientConfig == null)
+        {
+            _logger.LogError(
+                "CosmosConfiguration: no write client config named {WriteConfigName} for model {ModelName}",
+                modelConfig.WriteCosmosClientConfigurationName, modelName);
+            throw new CosmosConfigurationException($"No write client config for {modelName}");
+        }
+
+        var readClient = new CosmosClientBuilder(readClientConfig.ConnectionString)
+            .WithThrottlingRetryOptions(TimeSpan.FromSeconds(15), 10000)
+            .WithBulkExecution(true)
+            .Build();
+        _readContainer = readClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+
+        var writeClient = new CosmosClientBuilder(writeClientConfig.ConnectionString)
+            .WithThrottlingRetryOptions(TimeSpan.FromSeconds(15), 10000)
+            .WithBulkExecution(true)
+            .Build();
+        _writeContainer = writeClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
     }
 
     /// <inheritdoc/>
-    public async Task<T?> GetByIdAsync(string id, string partitionKey)
+    public IQueryable<T> Queryable => _readContainer.GetItemLinqQueryable<T>(true);
+
+    /// <inheritdoc/>
+    public async Task<T?> GetItemAsync(string id, string partitionKey, CancellationToken cancellationToken = default)
     {
         try
         {
-            // Convert partition key value to PartitionKey object
-            PartitionKey pk = new PartitionKey(partitionKey);
+            var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
+                _readContainer.ReadItemAsync<T>(
+                    id,
+                    new PartitionKey(partitionKey),
+                    cancellationToken: cancellationToken
+                )
+            );
 
-            // Read the item from the container
-            ItemResponse<T> response = await _readContainer.ReadItemAsync<T>(id, pk);
+            _logger.LogInformation(
+                "GetItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+                id,
+                response.RequestCharge,
+                response.Diagnostics
+            );
 
-            // Return the item if found
             return response.Resource;
         }
-        catch (CosmosException)
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            // Handle the case where the item does not exist
             return null;
         }
     }
 
-    #endregion
-
-    #region WRITE OPERATIONS
-
     /// <inheritdoc/>
-    public async Task<T> AddAsync(ICosmosDataModel document)
+    public async Task<T> CreateItemAsync(T item, CancellationToken cancellationToken = default)
     {
-        if (document is null)
-            throw new CosmoBaseException("Cannot add a model that is null");
+        item.CreatedOnUtc = DateTime.UtcNow;
+        item.UpdatedOnUtc = DateTime.UtcNow;
+        item.Deleted = false;
 
-        await _writeContainer.CreateItemAsync(document);
-        return (T)document;
-    }
-
-    /// <inheritdoc/>
-    public async Task<T> CreateAsync(ICosmosDataModel document)
-    {
-        ArgumentNullException.ThrowIfNull(document);
-
-        document.CreatedOnUtc = DateTime.UtcNow;
-        document.UpdatedOnUtc = DateTime.UtcNow;
-        document.Deleted = false;
-
-        var partitionKey = document
-            .GetType()
-            .GetProperty(_partitionKeyProperty)
-            ?.GetValue(document, null);
-
-        await _writeContainer.CreateItemAsync(
-            (T)document,
-            new PartitionKey(partitionKey?.ToString())
+        // 2a) Execute under retry policy
+        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
+            _writeContainer.CreateItemAsync(
+                item,
+                new PartitionKey(GetPartitionKeyValue(item)),
+                cancellationToken: cancellationToken
+            )
         );
 
-        return (T)document;
+        // 2b) Log RU charge and diagnostics
+        _logger.LogInformation(
+            "CreateItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            response.Resource.Id,
+            response.RequestCharge,
+            response.Diagnostics
+        );
+
+        return response.Resource;
     }
 
     /// <inheritdoc/>
-    public async Task DeleteAsync(string id, DeleteOptions deleteOptions)
+    public async Task<T> ReplaceItemAsync(T item, CancellationToken cancellationToken = default)
     {
-        switch (deleteOptions)
+        item.UpdatedOnUtc = DateTime.UtcNow;
+
+        // wrap in retry
+        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
+            _writeContainer.ReplaceItemAsync(
+                item,
+                item.Id,
+                new PartitionKey(GetPartitionKeyValue(item)),
+                cancellationToken: cancellationToken
+            )
+        );
+
+        // log RU charge + diagnostics
+        _logger.LogInformation(
+            "ReplaceItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            response.Resource.Id,
+            response.RequestCharge,
+            response.Diagnostics
+        );
+
+        return response.Resource;
+    }
+
+
+    /// <inheritdoc/>
+    public async Task<T> UpsertItemAsync(T item, CancellationToken cancellationToken = default)
+    {
+        item.UpdatedOnUtc = DateTime.UtcNow;
+
+        // wrap in retry
+        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
+            _writeContainer.UpsertItemAsync(
+                item,
+                new PartitionKey(GetPartitionKeyValue(item)),
+                cancellationToken: cancellationToken
+            )
+        );
+
+        // log RU charge + diagnostics
+        _logger.LogInformation(
+            "UpsertItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            response.Resource.Id,
+            response.RequestCharge,
+            response.Diagnostics
+        );
+
+        return response.Resource;
+    }
+
+    /// <inheritdoc/>
+    public async Task DeleteItemAsync(
+        string id,
+        string partitionKey,
+        DeleteOptions deleteOptions = DeleteOptions.HardDelete,
+        CancellationToken cancellationToken = default)
+    {
+        if (deleteOptions == DeleteOptions.SoftDelete)
         {
-            case DeleteOptions.HardDelete:
-                await _writeContainer.DeleteItemAsync<T>(id, new PartitionKey(_partitionKeyProperty));
-                return;
-            case DeleteOptions.SoftDelete:
-                var item = await GetByIdAsync(id);
-                if (item is null)
-                    return;
-                ((ICosmosDataModel)item).Deleted = true;
-                await UpdateAsync((ICosmosDataModel)item);
-                return;
+            await SoftDeleteAsync(id, partitionKey, cancellationToken);
+            return;
+        }
+
+        // wrap hard delete in retry policy
+        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
+            _writeContainer.DeleteItemAsync<T>(
+                id,
+                new PartitionKey(partitionKey),
+                cancellationToken: cancellationToken
+            )
+        );
+
+        // log RU charge + diagnostics
+        _logger.LogInformation(
+            "DeleteItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            id,
+            response.RequestCharge,
+            response.Diagnostics
+        );
+    }
+
+    private async Task SoftDeleteAsync(string id, string partitionKey, CancellationToken cancellationToken)
+    {
+        var item = await GetItemAsync(id, partitionKey, cancellationToken);
+        if (item is null) return;
+        item.Deleted = true;
+        await ReplaceItemAsync(item, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public IAsyncEnumerable<T> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        // x is ICosmosDataModel
+        var linq = Queryable.Where(x => !x.Deleted);
+        return ExecuteIterator(linq.ToFeedIterator(), cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public IAsyncEnumerable<T> GetAllAsync(string partitionKey, CancellationToken cancellationToken = default)
+    {
+        var sql = $"SELECT * FROM c WHERE c.{_partitionKeyProperty} = @pk AND c.Deleted = false";
+        var def = new QueryDefinition(sql).WithParameter("@pk", partitionKey);
+        return ExecuteIterator(
+            _readContainer.GetItemQueryIterator<T>(def,
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(partitionKey) }),
+            cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public IAsyncEnumerable<T> GetAllAsync(int limit, int offset, int count,
+        CancellationToken cancellationToken = default)
+    {
+        var sql = $"SELECT * FROM c WHERE c.Deleted = false OFFSET @offset LIMIT @limit";
+        var def = new QueryDefinition(sql)
+            .WithParameter("@offset", offset)
+            .WithParameter("@limit", limit);
+        return ExecuteIterator(
+            _readContainer.GetItemQueryIterator<T>(def,
+                requestOptions: new QueryRequestOptions { MaxItemCount = limit }), cancellationToken, count);
+    }
+
+    private async IAsyncEnumerable<T> ExecuteIterator(
+        FeedIterator<T> iterator,
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        int? take = null)
+    {
+        var remaining = take;
+        while (iterator.HasMoreResults && (!remaining.HasValue || remaining > 0))
+        {
+            // wrap each page read in retry
+            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
+                (_, ct) => iterator.ReadNextAsync(ct),
+                new Context("GetPage"),
+                cancellationToken
+            );
+
+            // log RUs + diagnostics for this page
+            _logger.LogInformation(
+                "Cosmos query page returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                page.Count,
+                page.RequestCharge,
+                page.Diagnostics
+            );
+
+            foreach (var item in page)
+            {
+                yield return item;
+                if (remaining.HasValue && --remaining == 0)
+                    yield break;
+            }
         }
     }
 
     /// <inheritdoc/>
-    public async Task DeleteAsync(string id, string partitionKey, DeleteOptions deleteOptions)
+    public IAsyncEnumerable<T> QueryAsync(ISpecification<T> specification,
+        CancellationToken cancellationToken = default)
     {
-        switch (deleteOptions)
+        var def = specification.ToCosmosQuery();
+        return ExecuteIterator(_readContainer.GetItemQueryIterator<T>(def), cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public IAsyncEnumerable<List<T>> BulkReadAsyncEnumerable(ISpecification<T> specification, string partitionKey,
+        int batchSize = 100, int maxConcurrency = 50, CancellationToken cancellationToken = default)
+    {
+        var options = new QueryRequestOptions
         {
-            case DeleteOptions.HardDelete:
-                await _writeContainer.DeleteItemAsync<T>(id, new PartitionKey(partitionKey));
-                return;
-            case DeleteOptions.SoftDelete:
-                var item = await GetByIdAsync(id, partitionKey);
-                if (item is null)
-                    return;
-                ((ICosmosDataModel)item).Deleted = true;
-                await UpdateAsync((ICosmosDataModel)item);
-                return;
+            PartitionKey = new PartitionKey(partitionKey), MaxItemCount = batchSize, MaxConcurrency = maxConcurrency
+        };
+        return ExecuteBatchIterator(
+            _readContainer.GetItemQueryIterator<T>(specification.ToCosmosQuery(), requestOptions: options),
+            cancellationToken);
+    }
+
+    private async IAsyncEnumerable<List<T>> ExecuteBatchIterator(
+        FeedIterator<T> iterator,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        while (iterator.HasMoreResults)
+        {
+            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
+                (_, ct) => iterator.ReadNextAsync(ct),
+                new Context("GetPage"),
+                cancellationToken
+            );
+
+            _logger.LogInformation(
+                "Cosmos bulk-read page returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                page.Count,
+                page.RequestCharge,
+                page.Diagnostics
+            );
+
+            yield return page.ToList();
         }
     }
 
     /// <inheritdoc/>
-    public async Task<T> UpdateAsync(ICosmosDataModel document)
+    public async Task<int> GetCountAsync(string partitionKey, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(document);
+        var sql = $"SELECT VALUE COUNT(1) FROM c WHERE c.{_partitionKeyProperty} = @pk";
+        var def = new QueryDefinition(sql)
+            .WithParameter("@pk", partitionKey);
 
-        document.UpdatedOnUtc = DateTime.UtcNow;
-
-        var partitionKey = document
-            .GetType()
-            .GetProperty(_partitionKeyProperty)
-            ?.GetValue(document, null);
-
-        var response = await _writeContainer.UpsertItemAsync(
-            (T)document,
-            new PartitionKey(partitionKey?.ToString())
+        var iterator = _readContainer.GetItemQueryIterator<int>(
+            def,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(partitionKey) }
         );
 
-        return response;
+        // execute under retry policy
+        var response = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<int>>(
+            (_, ct) => iterator.ReadNextAsync(ct),
+            new Context("GetCount"),
+            cancellationToken
+        );
+
+        // record RU charge in histogram
+        CosmosRepositoryMetrics.RequestCharge.Record(
+            response.RequestCharge,
+            new("model", typeof(T).Name),
+            new("operation", "GetCount")
+        );
+
+        _logger.LogInformation(
+            "GetCountAsync: Partition {PartitionKey} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            partitionKey,
+            response.RequestCharge,
+            response.Diagnostics
+        );
+
+        return response.FirstOrDefault();
     }
 
     /// <inheritdoc/>
-    public async Task<List<T>> GetAllByPropertyAsync(string propertyName, string propertyValue)
+    public async Task<(IList<T> Items, string? ContinuationToken)> GetPageWithTokenAsync(
+        ISpecification<T> spec,
+        string partitionKey,
+        int pageSize,
+        string? continuationToken = null,
+        CancellationToken cancellationToken = default)
     {
-        var queryString =
-            $"SELECT * FROM c WHERE c.{propertyName} = @propertyValue AND c.IsDeleted = false";
+        var (items, token, _) = await GetPageInternalAsync(
+                spec,
+                partitionKey,
+                pageSize,
+                continuationToken,
+                cancellationToken,
+                includeCount: false)
+            ;
 
-        // Create query definition with parameters
-        var queryDefinition = new QueryDefinition(queryString).WithParameter(
-            "@propertyValue",
-            propertyValue
+        return (items, token);
+    }
+
+    /// <inheritdoc/>
+    public Task<(IList<T> Items, string? ContinuationToken, int? TotalCount)> GetPageWithTokenAndCountAsync(
+        ISpecification<T> spec, string partitionKey, int pageSize, string? continuationToken = null,
+        CancellationToken cancellationToken = default)
+        => GetPageInternalAsync(spec, partitionKey, pageSize, continuationToken, cancellationToken, includeCount: true);
+
+    private async Task<(IList<T> Items, string? ContinuationToken, int? TotalCount)> GetPageInternalAsync(
+        ISpecification<T> spec,
+        string partitionKey,
+        int pageSize,
+        string? continuationToken,
+        CancellationToken cancellationToken,
+        bool includeCount)
+    {
+        var options = new QueryRequestOptions
+        {
+            PartitionKey = new PartitionKey(partitionKey),
+            MaxItemCount = pageSize
+        };
+
+        // 1) Read the page under retry policy
+        var pageResponse = await _cosmosFeedRetryPolicy.ExecuteAsync(() =>
+            _readContainer.GetItemQueryIterator<T>(spec.ToCosmosQuery(), continuationToken, options)
+                .ReadNextAsync(cancellationToken)
         );
 
-        var queryResultSetIterator = _readContainer.GetItemQueryIterator<T>(queryDefinition);
+        // 2) Record RU charge for the page
+        CosmosRepositoryMetrics.RequestCharge.Record(
+            pageResponse.RequestCharge,
+            new("model", typeof(T).Name),
+            new("operation", "GetPage")
+        );
 
-        var results = new List<T>();
+        _logger.LogInformation(
+            "GetPageInternalAsync: Partition {PartitionKey} returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+            partitionKey,
+            pageResponse.Count,
+            pageResponse.RequestCharge,
+            pageResponse.Diagnostics
+        );
 
-        // Iterate through the result set
-        while (queryResultSetIterator.HasMoreResults)
+        var items = pageResponse.ToList();
+        var nextToken = pageResponse.ContinuationToken;
+        int? total = null;
+
+        // 3) If requested, fetch total count (only on first page)
+        if (includeCount && string.IsNullOrEmpty(continuationToken))
         {
-            var response = await queryResultSetIterator.ReadNextAsync();
-            results.AddRange(response.ToList());
+            try
+            {
+                var countSpec = spec.ConvertToCountQuery();
+                var countIterator = _readContainer.GetItemQueryIterator<int>(countSpec, requestOptions: options);
+
+                var countResponse = await _cosmosFeedRetryPolicy.ExecuteAsync(() =>
+                    countIterator.ReadNextAsync(cancellationToken)
+                );
+
+                // Record RU for count query
+                CosmosRepositoryMetrics.RequestCharge.Record(
+                    countResponse.RequestCharge,
+                    new("model", typeof(T).Name),
+                    new("operation", "GetPageCount")
+                );
+
+                _logger.LogInformation(
+                    "GetPageInternalAsync (count): Partition {PartitionKey} consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                    partitionKey,
+                    countResponse.RequestCharge,
+                    countResponse.Diagnostics
+                );
+
+                total = countResponse.FirstOrDefault();
+            }
+            catch (CosmosException ex)
+            {
+                throw new CosmoBaseException("Error retrieving total count for paged query", ex);
+            }
         }
 
-        return results;
+        return (items, nextToken, total);
     }
 
     /// <inheritdoc/>
     public async Task<List<T>> GetAllByArrayPropertyAsync(
         string arrayName,
-        string arrayPropertyName,
-        string propertyValue
-    )
+        string elementPropertyName,
+        object elementPropertyValue,
+        CancellationToken cancellationToken = default)
     {
-        // Parameter for the root document (T is the document type)
-        var parameter = Expression.Parameter(typeof(T), "item");
+        var sql = $"SELECT * FROM c WHERE ARRAY_CONTAINS(c.{arrayName}, {{ '{elementPropertyName}': @value }})";
+        var def = new QueryDefinition(sql)
+            .WithParameter("@value", elementPropertyValue);
 
-        // Access the array by its name (e.g., item.AccountMembers)
-        var arrayProperty = Expression.PropertyOrField(parameter, arrayName);
+        var iterator = _readContainer.GetItemQueryIterator<T>(def);
+        var results = new List<T>();
 
-        // Get the array element type dynamically
-        var arrayElementType = typeof(T)
-            .GetProperty(arrayName)
-            ?.PropertyType.GetGenericArguments()[0];
-
-        if (arrayElementType == null)
+        while (iterator.HasMoreResults)
         {
-            throw new InvalidOperationException(
-                $"Could not determine the element type of the array '{arrayName}'"
+            // 1) read next page under retry policy
+            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
+                (_, ct) => iterator.ReadNextAsync(ct),
+                new Context("GetPage"),
+                cancellationToken
             );
-        }
 
-        // Create a parameter for each array element
-        var arrayItemParameter = Expression.Parameter(arrayElementType, "arrayItem");
+            // 2) record RU charge
+            CosmosRepositoryMetrics.RequestCharge.Record(
+                page.RequestCharge,
+                new("model", typeof(T).Name),
+                new("operation", "GetAllByArrayProperty")
+            );
 
-        // Access the property inside the array element (e.g., arrayItem.Email)
-        var arrayPropertyAccess = Expression.PropertyOrField(arrayItemParameter, arrayPropertyName);
+            _logger.LogInformation(
+                "GetAllByArrayPropertyAsync: returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                page.Count,
+                page.RequestCharge,
+                page.Diagnostics
+            );
 
-        // Create an expression to compare the property value (e.g., arrayItem.Email == "test@example.com")
-        var equalityExpression = Expression.Equal(
-            arrayPropertyAccess,
-            Expression.Constant(propertyValue)
-        );
-
-        // Create a lambda expression for filtering array elements
-        var lambdaForAny = Expression.Lambda(equalityExpression, arrayItemParameter);
-
-        // Use the Any() method to filter the array (e.g., item.AccountMembers.Any(arrayItem => arrayItem.Email == "test@example.com"))
-        var anyMethod = typeof(Enumerable)
-            .GetMethods()
-            .First(m => m.Name == "Any" && m.GetParameters().Length == 2)
-            .MakeGenericMethod(arrayElementType);
-
-        var anyCall = Expression.Call(anyMethod, arrayProperty, lambdaForAny);
-
-        // Create the final lambda expression for the queryable (e.g., item => item.AccountMembers.Any(...))
-        var lambdaForWhere = Expression.Lambda<Func<T, bool>>(anyCall, parameter);
-
-        // Apply the Where clause dynamically to the queryable
-        var query = Queryable.Where(lambdaForWhere).ToFeedIterator();
-
-        var results = new List<T>();
-
-        // Execute the query and gather results
-        while (query.HasMoreResults)
-        {
-            foreach (var result in await query.ReadNextAsync())
-            {
-                results.Add(result);
-            }
+            results.AddRange(page);
         }
 
         return results;
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<T> GetAll(
-        [EnumeratorCancellation] CancellationToken cancellationToken,
-        string partitionKey
-    )
+    public async Task<List<T>> GetAllByPropertyComparisonAsync(
+        IEnumerable<PropertyFilter> filters,
+        CancellationToken cancellationToken = default)
     {
-        var sqlQueryText =
-            $"SELECT * FROM c WHERE c.{_partitionKeyProperty} = @partitionKey AND c.IsDeleted = false";
+        // materialize filters
+        var filterList = filters as IReadOnlyCollection<PropertyFilter> ?? filters.ToList();
 
-        QueryDefinition queryDefinition = new QueryDefinition(sqlQueryText).WithParameter(
-            "@partitionKey",
-            partitionKey
-        );
+        // build SQL + parameters
+        var sql = filterList.BuildSqlWhereClause();
+        var def = new QueryDefinition(sql);
+        filterList.AddParameters(def);
 
-        using FeedIterator<T> queryResultSetIterator = _readContainer.GetItemQueryIterator<T>(
-            queryDefinition
-        );
-        while (queryResultSetIterator.HasMoreResults)
-        {
-            FeedResponse<T> currentResultSet = await queryResultSetIterator.ReadNextAsync(cancellationToken);
-            foreach (T item in currentResultSet)
-            {
-                yield return item;
-            }
-        }
-    }
-
-    /// <inheritdoc/>
-    public async Task<List<T>> GetAllByPropertyComparisonAsync(List<PropertyFilter> propertyFilters)
-    {
-        // Start building the query string
-        string queryString = "SELECT * FROM c WHERE ";
-
-        // Dynamically construct the WHERE clause
-        // EXCEPT THE IN CLAUSES
-        var conditions = propertyFilters.Select(p =>
-        {
-            if (p.PropertyComparison == PropertyComparison.In)
-            {
-                // If the list is empty we do not want to add the IN clause
-                var itemList = (List<string>)p.PropertyValue;
-                if (itemList.Count == 0)
-                    return string.Empty;
-
-                var propertyValueList = (List<string>)p.PropertyValue;
-                var itemListQueryInPortion = string.Join(
-                    ", ",
-                    propertyValueList.Select(v => $"\"{v}\"")
-                );
-                return $"c.{p.PropertyName[1..]} IN ({itemListQueryInPortion})";
-            }
-            else
-            {
-                return $"c.{p.PropertyName[1..]} {p.PropertyComparison} {p.PropertyName}";
-            }
-        });
-
-        queryString += string.Join(" AND ", conditions.Where(c => !string.IsNullOrEmpty(c)));
-
-        // Create the QueryDefinition
-        var queryDefinition = new QueryDefinition(queryString);
-
-        // Add the parameters dynamically
-        foreach (var param in propertyFilters)
-        {
-            if (param.PropertyComparison != PropertyComparison.In)
-            {
-                queryDefinition = queryDefinition.WithParameter(
-                    param.PropertyName,
-                    param.PropertyValue
-                );
-            }
-        }
-
-        var queryResultSetIterator = _readContainer.GetItemQueryIterator<T>(queryDefinition);
-
+        var iterator = _readContainer.GetItemQueryIterator<T>(def);
         var results = new List<T>();
 
-        // Iterate through the result set
-        while (queryResultSetIterator.HasMoreResults)
+        while (iterator.HasMoreResults)
         {
-            var response = await queryResultSetIterator.ReadNextAsync();
-            results.AddRange(response.ToList());
+            // execute under retry
+            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
+                (_, ct) => iterator.ReadNextAsync(ct),
+                new Context("GetPage"),
+                cancellationToken
+            );
+
+            // record RU charge
+            CosmosRepositoryMetrics.RequestCharge.Record(
+                page.RequestCharge,
+                new("model", typeof(T).Name),
+                new("operation", "GetAllByPropertyComparison")
+            );
+
+            _logger.LogInformation(
+                "GetAllByPropertyComparisonAsync: returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
+                page.Count,
+                page.RequestCharge,
+                page.Diagnostics
+            );
+
+            results.AddRange(page);
         }
 
         return results;
     }
 
     /// <inheritdoc/>
-    public async Task<IList<T>> GetAllDistinctInListByPropertyAsync(
-        CancellationToken cancellationToken,
-        string propertyName,
-        List<string> propertyValueList
-    )
+    public Task BulkUpsertAsync(IEnumerable<T> items, string partitionKeyValue, int batchSize = 100,
+        int maxConcurrency = 10, CancellationToken cancellationToken = default)
+        => BulkExecuteAsync(items, partitionKeyValue, batchSize, maxConcurrency,
+            (batch, item) => { batch.UpsertItem(item); }, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task BulkInsertAsync(IEnumerable<T> items, string partitionKeyValue, int batchSize = 100,
+        int maxConcurrency = 10, CancellationToken cancellationToken = default)
+        => BulkExecuteAsync(items, partitionKeyValue, batchSize, maxConcurrency,
+            (batch, item) => { batch.CreateItem(item); }, cancellationToken);
+
+
+    /// <summary>
+    /// Executes batch operations (upsert/create) in parallel groups.
+    /// </summary>
+    /// <param name="items">Items to process.</param>
+    /// <param name="partitionKeyValue">Partition key for all items.</param>
+    /// <param name="batchSize">Number of items per batch.</param>
+    /// <param name="maxConcurrency">Max parallel batches.</param>
+    /// <param name="batchAction">Action to apply per item on the transactional batch.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private async Task BulkExecuteAsync(
+        IEnumerable<T> items,
+        string partitionKeyValue,
+        int batchSize,
+        int maxConcurrency,
+        Action<TransactionalBatch, T> batchAction,
+        CancellationToken cancellationToken = default)
     {
-        var queryString =
-            $"SELECT DISTINCT c.{propertyName} FROM c WHERE c.{propertyName} IN ({string.Join(",", propertyValueList.Select(s => $"\"{s}\""))}) AND c.IsDeleted = false";
+        if (items == null) throw new ArgumentNullException(nameof(items));
+        if (string.IsNullOrEmpty(partitionKeyValue)) throw new ArgumentNullException(nameof(partitionKeyValue));
+        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        if (maxConcurrency <= 0) throw new ArgumentOutOfRangeException(nameof(maxConcurrency));
 
-        // Create query definition with parameters
-        var queryDefinition = new QueryDefinition(queryString);
-
-        var queryResultSetIterator = _readContainer.GetItemQueryIterator<T>(queryDefinition);
-
-        var results = new List<T>();
-
-        // Iterate through the result set
-        while (queryResultSetIterator.HasMoreResults)
+        // 1) Split items into fixed-size batches
+        var batches = new List<List<T>>();
+        var currentBatch = new List<T>(batchSize);
+        foreach (var item in items)
         {
-            var response = await queryResultSetIterator.ReadNextAsync(cancellationToken);
-            results.AddRange(response.ToList());
+            currentBatch.Add(item);
+            if (currentBatch.Count == batchSize)
+            {
+                batches.Add(currentBatch);
+                currentBatch = new List<T>(batchSize);
+            }
         }
 
-        return results;
+        if (currentBatch.Count > 0)
+            batches.Add(currentBatch);
+
+        // 2) Execute each batch under a throttle
+        var semaphore = new SemaphoreSlim(maxConcurrency);
+        var tasks = new List<Task>(batches.Count);
+
+        foreach (var batch in batches)
+        {
+            await semaphore.WaitAsync(cancellationToken);
+
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    var txn = _writeContainer.CreateTransactionalBatch(new PartitionKey(partitionKeyValue));
+                    foreach (var item in batch)
+                    {
+                        batchAction(txn, item);
+                        item.UpdatedOnUtc = DateTime.UtcNow;
+                    }
+
+                    // execute with retry
+                    var batchResponse = await _cosmosBatchRetryPolicy.ExecuteAsync(() =>
+                        txn.ExecuteAsync(cancellationToken)
+                    );
+
+                    // record RU charge
+                    CosmosRepositoryMetrics.RequestCharge.Record(
+                        batchResponse.RequestCharge,
+                        new("model", typeof(T).Name),
+                        new("operation", "BulkExecute")
+                    );
+
+                    // log RU charge + diagnostics
+                    _logger.LogInformation(
+                        "BulkExecuteAsync: batch consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+                        batchResponse.RequestCharge,
+                        batchResponse.Diagnostics
+                    );
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }, cancellationToken));
+        }
+
+        // 3) Wait for all batches to complete
+        await Task.WhenAll(tasks.ToArray());
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<T> GetByQuery(
-        [EnumeratorCancellation] CancellationToken cancellationToken,
-        string query
-    )
+    public async Task<T?> PatchItemAsync(
+        string id,
+        string partitionKey,
+        PatchSpecification spec,
+        CancellationToken cancellationToken = default)
     {
-        // Create query definition with parameters
-        var queryDefinition = new QueryDefinition(query);
+        var ops = spec.ToCosmosPatchOperations();
 
-        var queryResultSetIterator = _readContainer.GetItemQueryIterator<T>(queryDefinition);
+        // 1) execute under item‐level retry policy
+        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
+            _writeContainer.PatchItemAsync<T>(
+                id,
+                new PartitionKey(partitionKey),
+                ops,
+                cancellationToken: cancellationToken
+            )
+        );
 
-        // Iterate through the result set
-        while (queryResultSetIterator.HasMoreResults)
-        {
-            var response = await queryResultSetIterator.ReadNextAsync(cancellationToken);
-            foreach (var item in response.ToList())
-                yield return item;
-        }
+        // 2) record RU charge in histogram
+        CosmosRepositoryMetrics.RequestCharge.Record(
+            response.RequestCharge,
+            new("model", typeof(T).Name),
+            new("operation", "PatchItem")
+        );
+
+        // 3) log RU charge + diagnostics
+        _logger.LogInformation(
+            "PatchItemAsync: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            id,
+            response.RequestCharge,
+            response.Diagnostics
+        );
+
+        return response.Resource;
     }
 
-    #endregion
+    /// <summary>
+    /// Reads the value of the partition-key property (by name) from the given item.
+    /// </summary>
+    private string GetPartitionKeyValue(T item)
+    {
+        var prop = typeof(T).GetProperty(_partitionKeyProperty)
+                   ?? throw new InvalidOperationException(
+                       $"Partition-key property '{_partitionKeyProperty}' not found on type '{typeof(T).Name}'");
+        var raw = prop.GetValue(item)
+                  ?? throw new InvalidOperationException(
+                      $"Partition-key value for '{_partitionKeyProperty}' on '{typeof(T).Name}' was null");
+        return raw.ToString()!;
+    }
+
+    /*
+    private async Task<ItemResponse<T>> ExecWithMetricsAsync(
+        Func<Task<ItemResponse<T>>> call, string operation)
+    {
+        var resp = await _itemPolicy.ExecuteAsync(call);
+        SRequestChargeHist.Record(resp.RequestCharge,
+            new("model", typeof(T).Name), new("operation", operation));
+        _logger.LogInformation("{Op} consumed {RequestCharge} RUs. Diagnostics: {Diag}",
+            operation, resp.RequestCharge, resp.Diagnostics);
+        return resp;
+    }
+    */
 }
