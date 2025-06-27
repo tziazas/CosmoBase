@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/cosmobase.png" alt="CosmoBase Logo" width="300">
+</p>
+
 # CosmoBase
 
 [![Build Status](https://github.com/tziazas/CosmoBase/actions/workflows/publish.yml/badge.svg)](https://github.com/tziazas/CosmoBase/actions)
