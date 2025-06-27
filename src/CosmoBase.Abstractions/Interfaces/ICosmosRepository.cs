@@ -26,7 +26,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// All write operations include comprehensive validation, retry policies, and telemetry.
 /// </remarks>
 public interface ICosmosRepository<T> : IDisposable
-    where T : class, ICosmosDataModel, new()
+    where T : class, ICosmosDataModel
 {
     /// <summary>
     /// Exposes an <see cref="IQueryable"/> over the container for custom LINQ queries.

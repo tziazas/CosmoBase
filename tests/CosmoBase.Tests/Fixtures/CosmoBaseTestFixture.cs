@@ -1,0 +1,236 @@
+using CosmoBase.Abstractions.Interfaces;
+using CosmoBase.DependencyInjection;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Azure.Cosmos;
+using Xunit.Abstractions;
+
+namespace CosmoBase.Tests.Fixtures;
+
+/// <summary>
+/// Test fixture for CosmoBase integration tests with real Cosmos DB emulator
+/// </summary>
+public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
+{
+    private ServiceProvider? _serviceProvider;
+    private readonly IConfiguration _configuration;
+    private CosmosClient? _cosmosClient;
+    
+    public IServiceProvider ServiceProvider => _serviceProvider ?? 
+        throw new InvalidOperationException("ServiceProvider not initialized. Call InitializeAsync first.");
+
+    public CosmoBaseTestFixture()
+    {
+        var builder = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("Configuration/appsettings.json", optional: false, reloadOnChange: true);
+
+        _configuration = builder.Build();
+    }
+
+    public async Task InitializeAsync()
+    {
+        var services = new ServiceCollection();
+
+        // Add logging with console output
+        services.AddLogging(builder =>
+        {
+            builder.AddConsole();
+        });
+
+        // Add configuration
+        services.AddSingleton(_configuration);
+
+        // Create test user context
+        var testUserContext = new TestUserContext("TestUser");
+        
+        // Add CosmoBase with test configuration
+        services.AddCosmoBase(_configuration, testUserContext);
+
+        // Build service provider
+        _serviceProvider = services.BuildServiceProvider();
+
+        // Create direct Cosmos client for setup/cleanup
+        _cosmosClient = new CosmosClient(
+            "http://localhost:8081",
+            "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
+            new CosmosClientOptions
+            {
+                HttpClientFactory = () => new HttpClient(new HttpClientHandler()
+                {
+                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+                }),
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true
+            });
+
+        // Ensure test database exists
+        await EnsureTestDatabaseAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        if (_serviceProvider != null)
+        {
+            await CleanupTestDataAsync();
+            await _serviceProvider.DisposeAsync();
+        }
+        
+        _cosmosClient?.Dispose();
+    }
+
+    public void Dispose()
+    {
+        _serviceProvider?.Dispose();
+        _cosmosClient?.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private async Task EnsureTestDatabaseAsync()
+    {
+        try
+        {
+            if (_cosmosClient == null) return;
+
+            // Create test database
+            var database = await _cosmosClient.CreateDatabaseIfNotExistsAsync("CosmoBaseTestDb");
+            
+            // Create test containers
+            await database.Database.CreateContainerIfNotExistsAsync(
+                "Products", 
+                "/category",
+                throughput: 400);
+                
+            await database.Database.CreateContainerIfNotExistsAsync(
+                "Orders", 
+                "/customerId",
+                throughput: 400);
+
+            var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
+            logger?.LogInformation("Test database and containers created successfully");
+        }
+        catch (Exception ex)
+        {
+            var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
+            logger?.LogError(ex, "Failed to create test database");
+            throw;
+        }
+    }
+
+    private async Task CleanupTestDataAsync()
+    {
+        var cleanupEnabled = _configuration.GetSection("TestSettings")["DatabaseCleanupEnabled"];
+        if (bool.Parse(cleanupEnabled ?? "true"))
+        {
+            try
+            {
+                if (_cosmosClient == null) return;
+
+                // Delete test database (this removes all data)
+                await _cosmosClient.GetDatabase("CosmoBaseTestDb").DeleteAsync();
+
+                var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
+                logger?.LogInformation("Test database cleaned up successfully");
+            }
+            catch (Exception ex)
+            {
+                // Log cleanup errors but don't fail the test
+                var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
+                logger?.LogWarning(ex, "Failed to cleanup test data");
+            }
+        }
+    }
+
+    public T GetRequiredService<T>() where T : class
+    {
+        return ServiceProvider.GetRequiredService<T>();
+    }
+
+    public T? GetService<T>()
+    {
+        return ServiceProvider.GetService<T>();
+    }
+
+    /// <summary>
+    /// Get a fresh test database name for isolated tests
+    /// </summary>
+    public string GetTestDatabaseName() => $"CosmoBaseTestDb_{Guid.NewGuid():N}";
+}
+
+/// <summary>
+/// Test user context for audit field testing
+/// </summary>
+public class TestUserContext : IUserContext
+{
+    private readonly string _userId;
+
+    public TestUserContext(string userId)
+    {
+        _userId = userId;
+    }
+
+    public string? GetCurrentUser() => _userId;
+}
+
+/// <summary>
+/// XUnit logger provider for test output - use per-test method
+/// </summary>
+public class XunitLoggerProvider : ILoggerProvider
+{
+    private readonly ITestOutputHelper _testOutputHelper;
+
+    public XunitLoggerProvider(ITestOutputHelper testOutputHelper)
+    {
+        _testOutputHelper = testOutputHelper;
+    }
+
+    public ILogger CreateLogger(string categoryName)
+    {
+        return new XunitLogger(_testOutputHelper, categoryName);
+    }
+
+    public void Dispose() { }
+}
+
+/// <summary>
+/// XUnit logger implementation - use per-test method
+/// </summary>
+public class XunitLogger : ILogger
+{
+    private readonly ITestOutputHelper _testOutputHelper;
+    private readonly string _categoryName;
+
+    public XunitLogger(ITestOutputHelper testOutputHelper, string categoryName)
+    {
+        _testOutputHelper = testOutputHelper;
+        _categoryName = categoryName;
+    }
+
+    public IDisposable BeginScope<TState>(TState state) => new NoOpDisposable();
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        try
+        {
+            var message = formatter(state, exception);
+            _testOutputHelper.WriteLine($"[{logLevel}] {_categoryName}: {message}");
+            
+            if (exception != null)
+            {
+                _testOutputHelper.WriteLine($"Exception: {exception}");
+            }
+        }
+        catch
+        {
+            // Ignore logging failures in tests
+        }
+    }
+
+    private class NoOpDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
+}

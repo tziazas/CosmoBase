@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
@@ -13,7 +9,8 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// validation, and comprehensive error handling. This service abstracts away Cosmos DB implementation
 /// details and provides a clean domain-focused API for data persistence operations.
 /// </summary>
-/// <typeparam name="T">The document type that implements <see cref="ICosmosDataModel"/>.</typeparam>
+/// <typeparam name="TDto">The document type that implements <see cref="ICosmosDataModel"/>.</typeparam>
+/// <typeparam name="TDao">The Dao for the Repository</typeparam>
 /// <remarks>
 /// This service automatically manages audit fields for all operations:
 /// - **Creation operations**: Set CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy, and Deleted = false
@@ -24,7 +21,9 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// and detailed telemetry for monitoring and debugging. Bulk operations are optimized for high
 /// throughput with configurable parallelism and batch sizing.
 /// </remarks>
-public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
+public interface ICosmosDataWriteService<TDto, TDao> : IDataWriteService<TDto, string> // Here we use string because that is the key
+    where TDto : class
+    where TDao : ICosmosDataModel
 {
     #region Single Document Operations
 
@@ -56,7 +55,7 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Automatic retry for transient failures
     /// - Request unit consumption logged for cost monitoring
     /// </remarks>
-    new Task<T> CreateAsync(T document, CancellationToken cancellationToken = default);
+    new Task<TDto> CreateAsync(TDto document, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Replaces an existing document with intelligent audit field management.
@@ -88,7 +87,7 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Higher RU cost than patch operations for small changes
     /// - Automatic retry for transient failures
     /// </remarks>
-    Task<T> ReplaceAsync(T document, CancellationToken cancellationToken = default);
+    Task<TDto> ReplaceAsync(TDto document, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a new document or replaces an existing one with intelligent audit field management (upsert semantics).
@@ -128,7 +127,7 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Automatic retry for transient failures
     /// - Cache invalidation only occurs for actual creates (HTTP 201)
     /// </remarks>
-    new Task<T> UpsertAsync(T document, CancellationToken cancellationToken = default);
+    new Task<TDto> UpsertAsync(TDto document, CancellationToken cancellationToken = default);
 
     #endregion
 
@@ -193,9 +192,9 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Partial failures still invalidate cache for successful items
     /// </remarks>
     Task BulkUpsertAsync(
-        IEnumerable<T> documents,
-        Func<T, string> partitionKeySelector,
-        Action<T>? configureItem = null,
+        IEnumerable<TDto> documents,
+        Func<TDto, string> partitionKeySelector,
+        Action<TDto>? configureItem = null,
         int batchSize = 100,
         int maxConcurrency = 10,
         CancellationToken cancellationToken = default);
@@ -262,9 +261,9 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Cache invalidation is atomic with batch success
     /// </remarks>
     Task BulkInsertAsync(
-        IEnumerable<T> documents,
-        Func<T, string> partitionKeySelector,
-        Action<T>? configureItem = null,
+        IEnumerable<TDto> documents,
+        Func<TDto, string> partitionKeySelector,
+        Action<TDto>? configureItem = null,
         int batchSize = 100,
         int maxConcurrency = 10,
         CancellationToken cancellationToken = default);
@@ -323,7 +322,7 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Server-side operation reduces network overhead
     /// - Ideal for high-frequency counter updates or status changes
     /// </remarks>
-    Task<T?> PatchDocumentAsync(
+    Task<TDto?> PatchDocumentAsync(
         string id,
         string partitionKey,
         PatchSpecification patchSpec,
@@ -384,7 +383,7 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// );
     /// ```
     /// </remarks>
-    Task<T?> PatchDocumentListItemAsync(
+    Task<TDto?> PatchDocumentListItemAsync(
         string id,
         string partitionKey,
         string listPropertyName,
@@ -458,7 +457,7 @@ public interface ICosmosDataWriteService<T> : IDataWriteService<T, string>
     /// - Use GetItemAsync with includeDeleted = true to retrieve soft-deleted documents
     /// - Consider implementing business logic for user-initiated recovery operations
     /// </remarks>
-    Task DeleteDocumentAsync(
+    Task DeleteAsync(
         string id,
         string partitionKey,
         DeleteOptions deleteOptions,

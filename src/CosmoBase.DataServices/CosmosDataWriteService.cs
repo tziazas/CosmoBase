@@ -4,12 +4,13 @@ using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using PatchOperationType = CosmoBase.Abstractions.Enums.PatchOperationType;
 
 namespace CosmoBase.DataServices;
 
 /// <summary>
-/// High-performance implementation of <see cref="ICosmosDataWriteService{T}"/> that provides comprehensive
+/// High-performance implementation of <see cref="ICosmosDataWriteService{TDto, TDao}"/> that provides comprehensive
 /// write operations with automatic DTO/DAO mapping, audit field management, and enterprise-grade error handling.
 /// </summary>
 /// <typeparam name="TDto">The DTO type used by application code and exposed through the service interface.</typeparam>
@@ -19,9 +20,9 @@ namespace CosmoBase.DataServices;
 /// providing automatic mapping, validation, and audit field management. All operations include comprehensive
 /// error handling, logging, and performance optimizations for production workloads.
 /// </remarks>
-public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto>
-    where TDto : class, new()
-    where TDao : class, ICosmosDataModel, new()
+public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto, TDao>
+    where TDto : class
+    where TDao : class, ICosmosDataModel
 {
     private readonly ICosmosRepository<TDao> _cosmosRepository;
     private readonly IItemMapper<TDao, TDto> _mapper;
@@ -397,7 +398,7 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto>
     #region Delete Operations
 
     /// <inheritdoc />
-    public async Task DeleteDocumentAsync(
+    public async Task DeleteAsync(
         string id,
         string partitionKey,
         DeleteOptions deleteOptions,
@@ -429,44 +430,15 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto>
             throw new CosmoBaseException($"Unexpected error during document deletion: {ex.Message}", ex);
         }
     }
-
-    #endregion
-
-    #region IDataWriteService Implementation
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// This method is not supported in Cosmos DB operations because delete operations require both
-    /// an ID and a partition key. Use <see cref="DeleteDocumentAsync"/> instead.
-    /// </remarks>
-    /// <exception cref="CosmoBaseException">Always thrown as this operation is not supported.</exception>
-    Task<bool> IDataWriteService<TDto, string>.DeleteAsync(string id, CancellationToken cancellationToken)
+    
+    Task<bool> IDataWriteService<TDto, string>.DeleteAsync(
+        string id,
+        CancellationToken cancellationToken)
     {
-        _logger?.LogWarning("Attempted to call unsupported DeleteAsync method with ID only: {DocumentId}", id);
+        // either throw to force the new method:
         throw new CosmoBaseException(
-            $"Cosmos DB delete operations require both document ID and partition key. " +
-            $"Use DeleteDocumentAsync(string id, string partitionKey, DeleteOptions deleteOptions) instead. " +
-            $"Document ID: {id}");
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// This method returns the base interface signature for compatibility but delegates to 
-    /// the enhanced CreateAsync implementation.
-    /// </remarks>
-    async Task<TDto?> IDataWriteService<TDto, string>.CreateAsync(TDto entity, CancellationToken cancellationToken)
-    {
-        return await CreateAsync(entity, cancellationToken);
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// This method returns the base interface signature for compatibility but delegates to 
-    /// the enhanced UpsertAsync implementation.
-    /// </remarks>
-    async Task<TDto> IDataWriteService<TDto, string>.UpsertAsync(TDto entity, CancellationToken cancellationToken)
-    {
-        return await UpsertAsync(entity, cancellationToken);
+            "Cosmos DB deletes require both id & partition key. " +
+            "Use DeleteDocumentAsync(id, partitionKey, deleteOptions) instead.");
     }
 
     #endregion

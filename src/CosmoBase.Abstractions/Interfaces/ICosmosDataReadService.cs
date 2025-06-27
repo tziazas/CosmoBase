@@ -1,6 +1,3 @@
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using CosmoBase.Abstractions.Filters;
 
 namespace CosmoBase.Abstractions.Interfaces;
@@ -10,7 +7,8 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// comprehensive querying capabilities, and performance optimizations. This service abstracts away
 /// Cosmos DB implementation details and provides a clean domain-focused API for data retrieval operations.
 /// </summary>
-/// <typeparam name="T">The DTO type exposed to consumers that represents the domain model.</typeparam>
+/// <typeparam name="TDto">The DTO type exposed to consumers that represents the domain model.</typeparam>
+/// <typeparam name="TDao">The DAO for the repository</typeparam>
 /// <remarks>
 /// This service automatically handles:
 /// - **Soft delete filtering**: Non-deleted documents are returned by default unless explicitly requested
@@ -21,7 +19,10 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// All query operations respect the soft delete pattern and include comprehensive error handling,
 /// logging, and telemetry for production monitoring and debugging.
 /// </remarks>
-public interface ICosmosDataReadService<T> : IDataReadService<T, string>
+public interface
+    ICosmosDataReadService<TDto, TDao> : IDataReadService<TDto, string> // Here we use string because that is the key
+    where TDto : class
+    where TDao : ICosmosDataModel
 {
     /// <summary>
     /// Retrieves a single document by its unique identifier and partition key.
@@ -38,7 +39,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// the document if found regardless of deletion status (when <paramref name="includeDeleted"/> is <c>true</c>);
     /// otherwise <c>null</c>.
     /// </returns>
-    Task<T?> GetByIdAsync(string id, string partitionKey, bool includeDeleted = false,
+    Task<TDto?> GetByIdAsync(string id, string partitionKey, bool includeDeleted = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -57,7 +58,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// only non-deleted documents are returned. When <c>true</c>, all matching documents 
     /// are returned regardless of deletion status.
     /// </returns>
-    Task<List<T>> GetAllByArrayPropertyAsync(
+    Task<List<TDto>> GetAllByArrayPropertyAsync(
         string arrayName,
         string elementPropertyName,
         object elementPropertyValue,
@@ -80,7 +81,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// only non-deleted documents are returned. When <c>true</c>, all matching documents 
     /// are returned regardless of deletion status.
     /// </returns>
-    Task<List<T>> GetAllByPropertyComparisonAsync(
+    Task<List<TDto>> GetAllByPropertyComparisonAsync(
         IEnumerable<PropertyFilter> propertyFilters,
         bool includeDeleted = false,
         CancellationToken cancellationToken = default);
@@ -90,7 +91,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// </summary>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents that can be consumed with await foreach.</returns>
-    new IAsyncEnumerable<T> GetAllAsync(CancellationToken cancellationToken = default);
+    new IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streams all non-deleted documents within a specific partition asynchronously.
@@ -98,7 +99,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// <param name="partitionKey">The partition key to scope the query to a specific partition.</param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents within the specified partition.</returns>
-    IAsyncEnumerable<T> GetAllAsync(string partitionKey, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<TDto> GetAllAsync(string partitionKey, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streams a subset of documents using offset and limit semantics for pagination scenarios.
@@ -108,7 +109,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// <param name="count">Total maximum number of items to yield from the stream.</param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents after applying offset/limit/count constraints.</returns>
-    IAsyncEnumerable<T> GetAllAsync(int limit, int offset, int count,
+    IAsyncEnumerable<TDto> GetAllAsync(int limit, int offset, int count,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -120,7 +121,7 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// </param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents matching the specification criteria.</returns>
-    new IAsyncEnumerable<T> QueryAsync(ISpecification<T> specification,
+    new IAsyncEnumerable<TDto> QueryAsync(ISpecification<TDto> specification,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -143,8 +144,8 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// <returns>
     /// An async stream of document batches, where each batch contains a list of documents.
     /// </returns>
-    IAsyncEnumerable<List<T>> BulkReadAsyncEnumerable(
-        ISpecification<T> specification,
+    IAsyncEnumerable<List<TDto>> BulkReadAsyncEnumerable(
+        ISpecification<TDto> specification,
         string partitionKey,
         int batchSize = 100,
         int maxConcurrency = 50,
@@ -213,8 +214,8 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// A tuple containing the documents for the current page and a continuation token for the next page.
     /// The continuation token will be null if this is the last page.
     /// </returns>
-    Task<(IList<T> Items, string? ContinuationToken)> GetPageWithTokenAsync(
-        ISpecification<T> specification,
+    Task<(IList<TDto> Items, string? ContinuationToken)> GetPageWithTokenAsync(
+        ISpecification<TDto> specification,
         string partitionKey,
         int pageSize,
         string? continuationToken = null,
@@ -245,8 +246,8 @@ public interface ICosmosDataReadService<T> : IDataReadService<T, string>
     /// - ContinuationToken: Token for the next page (null if this is the last page)
     /// - TotalCount: Total count of matching documents (only calculated on first page)
     /// </returns>
-    Task<(IList<T> Items, string? ContinuationToken, int? TotalCount)> GetPageWithTokenAndCountAsync(
-        ISpecification<T> specification,
+    Task<(IList<TDto> Items, string? ContinuationToken, int? TotalCount)> GetPageWithTokenAndCountAsync(
+        ISpecification<TDto> specification,
         string partitionKey,
         int pageSize,
         string? continuationToken = null,

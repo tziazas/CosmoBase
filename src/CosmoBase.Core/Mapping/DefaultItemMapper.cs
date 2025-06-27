@@ -1,4 +1,3 @@
-using System;
 using System.Text.Json;
 using CosmoBase.Abstractions.Interfaces;
 
@@ -9,8 +8,8 @@ namespace CosmoBase.Core.Mapping;
 /// then deserializes to the target type. Handy as a “no-frills” default.
 /// </summary>
 public class DefaultItemMapper<TDao, TDto> : IItemMapper<TDao, TDto>
-    where TDao : class, new()
-    where TDto : class, new()
+    where TDao : class
+    where TDto : class
 {
     private static readonly JsonSerializerOptions _opts = new JsonSerializerOptions
     {

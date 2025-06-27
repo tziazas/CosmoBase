@@ -40,6 +40,8 @@
         <PackageVersion Include="coverlet.collector" Version="6.0.2" />
         <PackageVersion Include="Moq" Version="4.20.72" />
         <PackageVersion Include="FluentAssertions" Version="7.0.0" />
+        <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.6" />
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="9.0.6" />
 
         <!-- Additional Testing Packages for Cosmos DB -->
         <PackageVersion Include="AutoFixture" Version="4.18.1" />

@@ -7,14 +7,14 @@ using Microsoft.Extensions.Logging;
 namespace CosmoBase.DataServices;
 
 /// <summary>
-/// High-performance implementation of <see cref="ICosmosDataReadService{T}"/> that provides comprehensive
+/// High-performance implementation of <see cref="ICosmosDataReadService{TDto, TDao}"/> that provides comprehensive
 /// read operations with automatic DTO/DAO mapping, intelligent caching, and enterprise-grade error handling.
 /// </summary>
 /// <typeparam name="TDto">The DTO type exposed to consumers that represents the domain model.</typeparam>
 /// <typeparam name="TDao">The DAO type stored in Cosmos DB that implements <see cref="ICosmosDataModel"/>.</typeparam>
-public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto>
-    where TDao : class, ICosmosDataModel, new()
-    where TDto : class, new()
+public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TDao>
+    where TDto : class
+    where TDao : class, ICosmosDataModel
 {
     private readonly ICosmosRepository<TDao> _cosmosRepository;
     private readonly IItemMapper<TDao, TDto> _mapper;

@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-
 namespace CosmoBase.Abstractions.Interfaces;
 
 /// <summary>
@@ -16,8 +11,8 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// The data transfer object type used by application code. Must have a parameterless constructor.
 /// </typeparam>
 public interface IItemMapper<TDao, TDto>
-    where TDao : class, new()
-    where TDto : class, new()
+    where TDao : class
+    where TDto : class
 {
     /// <summary>
     /// Converts a DTO into its corresponding DAO for storage.
