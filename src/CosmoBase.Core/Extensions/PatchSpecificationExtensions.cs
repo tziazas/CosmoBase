@@ -1,7 +1,7 @@
-using Microsoft.Azure.Cosmos;                       // For PatchOperation
-using CosmoBase.Abstractions.Filters;               // For PatchSpecification, PatchOperationSpecification
+using CosmoBase.Abstractions.Filters;
+using Microsoft.Azure.Cosmos;
 
-namespace CosmoBase.Extensions;
+namespace CosmoBase.Core.Extensions;
 
 internal static class PatchSpecificationExtensions
 {

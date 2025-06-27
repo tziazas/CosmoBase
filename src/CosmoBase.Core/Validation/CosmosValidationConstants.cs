@@ -1,4 +1,4 @@
-namespace CosmoBase.Validation;
+namespace CosmoBase.Core.Validation;
 
 /// <summary>
 /// Constants used for Cosmos DB validation.

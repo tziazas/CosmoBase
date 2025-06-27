@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.Azure.Cosmos;
 
-namespace CosmoBase.Configuration;
+namespace CosmoBase.Core.Configuration;
 
 /// <summary>
 /// Configuration options for CosmoBase.

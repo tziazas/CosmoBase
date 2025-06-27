@@ -1,7 +1,7 @@
 using CosmoBase.Abstractions.Filters;
 using Microsoft.Azure.Cosmos;
 
-namespace CosmoBase.Extensions;
+namespace CosmoBase.Core.Extensions;
 
 /// <summary>
 /// Helpers to build SQL and parameters from <see cref="PropertyFilter"/> collections.
@@ -41,7 +41,7 @@ public static class PropertyFilterExtensions
                     break;
                 case PropertyComparison.In:
                     // We'll embed literals directly for IN
-                    var list = (IEnumerable<object>)f.PropertyValue!;
+                    var list = (IEnumerable<object>)f.PropertyValue;
                     var inList = string.Join(", ", list.Select(v => $"'{v}'"));
                     parts.Add($"c.{col} IN ({inList})");
                     break;

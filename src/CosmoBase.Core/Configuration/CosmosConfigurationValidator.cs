@@ -1,7 +1,7 @@
 using CosmoBase.Abstractions.Configuration;
 using Microsoft.Extensions.Options;
 
-namespace CosmoBase.Configuration;
+namespace CosmoBase.Core.Configuration;
 
 public class CosmosConfigurationValidator
     : IValidateOptions<CosmosConfiguration>

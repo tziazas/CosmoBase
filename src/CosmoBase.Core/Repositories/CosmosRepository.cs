@@ -7,13 +7,13 @@ using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
 using CosmoBase.Abstractions.Models;
-using CosmoBase.Extensions;
+using CosmoBase.Core.Extensions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
-namespace CosmoBase.Repositories;
+namespace CosmoBase.Core.Repositories;
 
 /// <summary>
 /// Provides low-level CRUD and query operations against a Cosmos DB container.

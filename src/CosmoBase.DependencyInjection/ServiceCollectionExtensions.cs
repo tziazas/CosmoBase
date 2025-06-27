@@ -6,12 +6,12 @@ using Microsoft.Extensions.Caching.Memory;
 using Polly;
 using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Abstractions.Interfaces;
-using CosmoBase.Configuration; // for CosmosConfigurationValidator
-using CosmoBase.Mapping;
-using CosmoBase.Repositories;
+using CosmoBase.Core.Configuration;
+using CosmoBase.Core.Mapping;
+using CosmoBase.Core.Repositories;
+using CosmoBase.Core.Services;
+using CosmoBase.Core.Validation;
 using CosmoBase.DataServices;
-using CosmoBase.Services;
-using CosmoBase.Validation;
 using Microsoft.Azure.Cosmos;
 
 namespace CosmoBase.DependencyInjection;

@@ -2,7 +2,7 @@ using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
 
-namespace CosmoBase.Validation;
+namespace CosmoBase.Core.Validation;
 
 /// <summary>
 /// Default implementation of Cosmos DB validation logic.

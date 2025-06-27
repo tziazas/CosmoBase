@@ -1,6 +1,6 @@
 using CosmoBase.Abstractions.Interfaces;
 
-namespace CosmoBase.Services;
+namespace CosmoBase.Core.Services;
 
 /// <summary>
 /// System user context for background services and system operations.

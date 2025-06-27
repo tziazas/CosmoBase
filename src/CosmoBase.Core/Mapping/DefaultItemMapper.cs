@@ -1,7 +1,7 @@
 using System.Text.Json;
 using CosmoBase.Abstractions.Interfaces;
 
-namespace CosmoBase.Mapping;
+namespace CosmoBase.Core.Mapping;
 
 /// <summary>
 /// A very generic mapper that serializes the source to JSON

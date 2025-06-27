@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
-namespace CosmoBase.Configuration;
+namespace CosmoBase.Core.Configuration;
 
 /// <summary>
 /// Validates CosmoBase configuration options.

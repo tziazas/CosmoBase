@@ -2,7 +2,7 @@ using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Models;
 using Microsoft.Azure.Cosmos;
 
-namespace CosmoBase.Extensions;
+namespace CosmoBase.Core.Extensions;
 
 /// <summary>
 /// Provides extension methods to convert a <see cref="SqlQuery"/> into Cosmos DB SDK types.

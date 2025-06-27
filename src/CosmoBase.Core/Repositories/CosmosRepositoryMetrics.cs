@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 
-namespace CosmoBase.Repositories;
+namespace CosmoBase.Core.Repositories;
 
 /// <summary>
 /// Use .NET’s built-in System.Diagnostics.Metrics API (available in .NET 6+) to emit both counters and histograms,

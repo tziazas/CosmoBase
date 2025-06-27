@@ -1,5 +1,5 @@
 using CosmoBase.Abstractions.Interfaces;
-using CosmoBase.Validation;
+using CosmoBase.Core.Validation;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CosmoBase.DependencyInjection;

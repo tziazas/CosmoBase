@@ -1,5 +1,5 @@
 using CosmoBase.Abstractions.Configuration;
-using CosmoBase.Services;
+using CosmoBase.Core.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 

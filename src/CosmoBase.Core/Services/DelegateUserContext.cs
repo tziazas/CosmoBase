@@ -1,6 +1,6 @@
 using CosmoBase.Abstractions.Interfaces;
 
-namespace CosmoBase.Services;
+namespace CosmoBase.Core.Services;
 
 /// <summary>
 /// User context implementation that uses a delegate function to resolve the current user.
