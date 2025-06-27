@@ -1,8 +1,8 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CosmoBase.Abstractions", "CosmoBase.Abstractions\CosmoBase.Abstractions.csproj", "{AD142935-172F-4073-A412-D894D7F2E5C5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CosmoBase.Abstractions", "src\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj", "{AD142935-172F-4073-A412-D894D7F2E5C5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CosmoBase", "CosmoBase\CosmoBase.csproj", "{C6FA06B3-E700-408B-9308-849B0E1EDCFF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CosmoBase", "src\CosmoBase\CosmoBase.csproj", "{C6FA06B3-E700-408B-9308-849B0E1EDCFF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
