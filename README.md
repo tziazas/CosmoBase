@@ -4,7 +4,7 @@
 [![NuGet](https://img.shields.io/nuget/v/CosmoBase.CosmosDb.svg)](https://www.nuget.org/packages/CosmoBase)
 [![License](https://img.shields.io/github/license/tziazas/CosmoBase.svg)](LICENSE)
 
-**CosmoBase** – Enterprise-grade Azure Cosmos DB library with advanced caching, validation, bulk operations, and intelligent soft-delete handling.
+**CosmoBase** – Enterprise-grade Azure Cosmos DB library with advanced caching, validation, bulk operations, intelligent soft-delete handling, and comprehensive audit field management.
 
 ---
 
@@ -24,7 +24,8 @@
 - **Soft-delete awareness**: Consistent filtering across all query methods
 
 ### **Enterprise Features**
-- **Audit trails**: Built-in `CreatedOnUtc`, `UpdatedOnUtc`, `CreatedBy`, `UpdatedBy` fields
+- **Comprehensive audit trails**: Automatic `CreatedOnUtc`, `UpdatedOnUtc`, `CreatedBy`, `UpdatedBy` field management
+- **Flexible user context**: Support for web applications, background services, and custom user resolution
 - **Soft-delete support**: Configurable soft-delete with `includeDeleted` parameters
 - **Comprehensive retry policies**: Polly-based retry with exponential backoff
 - **Metrics & observability**: Built-in telemetry and performance monitoring
@@ -105,19 +106,45 @@ In `appsettings.json`:
 }
 ```
 
-### 2. Register CosmoBase and Data Services in DI
+### 2. Register CosmoBase with User Context
 
-In `Program.cs`:
+**CosmoBase requires a user context for audit field tracking.** Choose the approach that fits your application:
 
+#### **Web Applications:**
 ```csharp
 using CosmoBase.DependencyInjection;
 using CosmoBase.Abstractions.Interfaces;
+using CosmoBase.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Registers Cosmos clients, repositories, validators, and data services
+// Custom user context that reads from HTTP context
+public class WebUserContext : IUserContext
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    
+    public WebUserContext(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor;
+    }
+    
+    public string? GetCurrentUser()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        return context?.User?.Identity?.Name 
+            ?? context?.User?.FindFirst("sub")?.Value 
+            ?? "Anonymous";
+    }
+}
+
+// Register HTTP context accessor and custom user context
+builder.Services.AddHttpContextAccessor();
+var userContext = new WebUserContext(serviceProvider.GetRequiredService<IHttpContextAccessor>());
+
+// Register CosmoBase with user context
 builder.Services.AddCosmoBase(
-    builder.Configuration.GetSection("CosmoBase"),
+    builder.Configuration, 
+    userContext,
     config =>
     {
         // Optional: Override specific settings
@@ -126,15 +153,40 @@ builder.Services.AddCosmoBase(
               .NumberOfWorkers = 12;
     });
 
-// Optional: Register custom validators for specific types
-builder.Services.AddSingleton<ICosmosValidator<Product>, CustomProductValidator>();
+var app = builder.Build();
+```
+
+#### **Background Services / Console Applications:**
+```csharp
+var builder = Host.CreateApplicationBuilder(args);
+
+// Use system user context for background services
+builder.Services.AddCosmoBaseWithSystemUser(
+    builder.Configuration, 
+    "DataProcessor"); // System user name
+
+var host = builder.Build();
+```
+
+#### **Custom User Resolution:**
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Use delegate for custom user resolution logic
+builder.Services.AddCosmoBaseWithUserProvider(
+    builder.Configuration,
+    () => 
+    {
+        // Your custom logic to resolve current user
+        return GetCurrentUserFromJwt() ?? "System";
+    });
 
 var app = builder.Build();
 ```
 
 ### 3. Use Data Services (Recommended)
 
-**High-level data services** provide the best developer experience:
+**High-level data services** provide the best developer experience with automatic audit field management:
 
 ```csharp
 public class ProductService
@@ -152,9 +204,10 @@ public class ProductService
 
     public async Task ProcessProductsAsync()
     {
-        // Bulk save with automatic validation and retry
+        // Bulk save with automatic validation, retry, and audit fields
         var newProducts = GetNewProductDtos();
         await _writer.SaveAsync(newProducts);
+        // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically set
 
         // Stream products with intelligent caching
         await foreach (var product in _reader.GetAllAsyncEnumerable(
@@ -204,7 +257,16 @@ public class AdvancedProductService
             "premium",
             includeDeleted: false);
 
-        // Bulk operations with detailed error handling
+        // Create with automatic audit fields
+        var newProduct = new ProductDocument 
+        { 
+            Id = "new-product", 
+            Category = "electronics" 
+        };
+        await _repository.CreateItemAsync(newProduct);
+        // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically populated
+
+        // Bulk operations with detailed error handling and audit fields
         try
         {
             await _repository.BulkUpsertAsync(
@@ -231,6 +293,65 @@ public class AdvancedProductService
 
 ## 🔧 Advanced Features
 
+### **Comprehensive Audit Field Management**
+
+CosmoBase automatically manages audit fields across all operations:
+
+```csharp
+// All CRUD operations automatically set audit fields
+var product = new Product { Id = "123", Name = "Widget" };
+
+// Create operation sets all fields
+await repository.CreateItemAsync(product);
+// Result: CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy all populated
+
+// Update operation sets modified fields only
+product.Name = "Updated Widget";
+await repository.ReplaceItemAsync(product);
+// Result: UpdatedOnUtc and UpdatedBy updated, CreatedOnUtc/CreatedBy preserved
+
+// Upsert operation intelligently determines create vs update
+await repository.UpsertItemAsync(product);
+// Result: Automatically handles create vs update audit field logic
+
+// Bulk operations handle audit fields for all items
+await repository.BulkInsertAsync(products, "partition");
+// Result: All items get proper audit fields based on operation type
+```
+
+### **Flexible User Context Options**
+
+Choose the user context approach that fits your application:
+
+```csharp
+// 1. System user for background services
+services.AddCosmoBaseWithSystemUser(configuration, "BackgroundService");
+
+// 2. Delegate function for custom logic
+services.AddCosmoBaseWithUserProvider(configuration, () => 
+{
+    return HttpContext.Current?.User?.Identity?.Name ?? "Anonymous";
+});
+
+// 3. Custom implementation for complex scenarios
+public class JwtUserContext : IUserContext
+{
+    public string? GetCurrentUser()
+    {
+        // Extract user from JWT, database, etc.
+        return ExtractUserFromToken();
+    }
+}
+services.AddCosmoBase(configuration, new JwtUserContext());
+
+// 4. Different contexts for different scenarios
+#if DEBUG
+    services.AddCosmoBase(configuration, new SystemUserContext("Development"));
+#else
+    services.AddCosmoBase(configuration, new ProductionUserContext());
+#endif
+```
+
 ### **Intelligent Caching**
 
 Built-in count caching with age-based invalidation:
@@ -242,7 +363,7 @@ var count = await repository.GetCountWithCacheAsync("partition", 15);
 // Force fresh count (bypass cache)
 var freshCount = await repository.GetCountWithCacheAsync("partition", 0);
 
-// Manual cache invalidation
+// Manual cache invalidation (automatic after creates/deletes)
 repository.InvalidateCountCache("partition");
 ```
 
@@ -317,35 +438,6 @@ catch (CosmoBaseException ex) when (ex.Data.Contains("BulkInsertResult"))
 }
 ```
 
-### **Flexible Configuration**
-
-Multiple configuration approaches to suit different scenarios:
-
-```csharp
-// Method 1: Default configuration section
-builder.Services.AddCosmoBase(builder.Configuration);
-
-// Method 2: Custom section with overrides
-builder.Services.AddCosmoBase(
-    builder.Configuration.GetSection("MyCosmosSettings"),
-    options => options.CosmosClientConfigurations[0].MaxRetryAttempts = 10);
-
-// Method 3: Fully programmatic
-builder.Services.AddCosmoBase(options =>
-{
-    options.CosmosClientConfigurations = new[]
-    {
-        new CosmosClientConfiguration
-        {
-            Name = "Default",
-            ConnectionString = connectionString,
-            NumberOfWorkers = 10,
-            AllowBulkExecution = true
-        }
-    };
-});
-```
-
 ### **Observability & Metrics**
 
 Built-in telemetry for monitoring and performance optimization:
@@ -411,21 +503,36 @@ public class CosmosTests
     {
         var services = new ServiceCollection();
         
-        // Configure for Cosmos DB emulator
-        services.AddCosmoBase(options =>
-        {
-            options.CosmosClientConfigurations = new[]
+        // Configure for Cosmos DB emulator with test user context
+        services.AddCosmoBase(
+            new SystemUserContext("TestUser"),
+            options =>
             {
-                new CosmosClientConfiguration
+                options.CosmosClientConfigurations = new[]
                 {
-                    Name = "Test",
-                    ConnectionString = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
-                    NumberOfWorkers = 1,
-                    AllowBulkExecution = false,
-                    ConnectionMode = "Gateway"
-                }
-            };
-        });
+                    new CosmosClientConfiguration
+                    {
+                        Name = "Test",
+                        ConnectionString = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
+                        NumberOfWorkers = 1,
+                        AllowBulkExecution = false,
+                        ConnectionMode = "Gateway"
+                    }
+                };
+                
+                options.CosmosModelConfigurations = new[]
+                {
+                    new CosmosModelConfiguration
+                    {
+                        ModelName = "Product",
+                        DatabaseName = "TestDb",
+                        CollectionName = "TestContainer",
+                        PartitionKey = "/category",
+                        ReadCosmosClientConfigurationName = "Test",
+                        WriteCosmosClientConfigurationName = "Test"
+                    }
+                };
+            });
         
         _serviceProvider = services.BuildServiceProvider();
     }
@@ -435,9 +542,16 @@ public class CosmosTests
     {
         var repository = _serviceProvider.GetRequiredService<ICosmosRepository<Product>>();
         
-        // Test with validation
+        // Test with validation and audit fields
         var product = new Product { Id = "test", Category = "electronics" };
-        await repository.CreateItemAsync(product);
+        var result = await repository.CreateItemAsync(product);
+        
+        // Verify audit fields were set
+        Assert.IsNotNull(result.CreatedOnUtc);
+        Assert.IsNotNull(result.UpdatedOnUtc);
+        Assert.AreEqual("TestUser", result.CreatedBy);
+        Assert.AreEqual("TestUser", result.UpdatedBy);
+        Assert.IsFalse(result.Deleted);
         
         // Test cached count
         var count = await repository.GetCountWithCacheAsync("electronics", 0);
@@ -468,6 +582,11 @@ public async Task TestServiceWithMockedRepository()
 
 ## 🚀 Performance Best Practices
 
+### **Audit Field Management**
+- User context resolution is cached per operation - no performance penalty
+- Audit fields are set in-memory before Cosmos DB operations
+- Use `SystemUserContext` for background services to avoid HTTP context overhead
+
 ### **Bulk Operations**
 - Use batch sizes of 50-100 for optimal throughput
 - Limit concurrency to 10-20 to avoid overwhelming Cosmos DB
@@ -492,7 +611,39 @@ public async Task TestServiceWithMockedRepository()
 
 ## 📊 Migration Guide
 
+### **From Version 1.x to 2.x**
 
+**Breaking Change: Required User Context**
+
+Version 2.0 introduces comprehensive audit field management, which requires specifying a user context:
+
+```csharp
+// Before (v1.x)
+services.AddCosmoBase(configuration);
+
+// After (v2.x) - Background service
+services.AddCosmoBaseWithSystemUser(configuration, "MyService");
+
+// After (v2.x) - Web application
+services.AddCosmoBase(configuration, new WebUserContext(httpContextAccessor));
+
+// After (v2.x) - Custom logic
+services.AddCosmoBaseWithUserProvider(configuration, () => GetCurrentUser());
+```
+
+**Other Changes:**
+
+```csharp
+// Enhanced count operations with caching
+var count = await repository.GetCountWithCacheAsync("partition", 15);
+
+// Consistent soft-delete parameters
+var items = await repository.GetAllByArrayPropertyAsync("tags", "type", "premium", includeDeleted: false);
+
+// Automatic audit field management
+var product = await repository.CreateItemAsync(item);
+// CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically populated
+```
 
 ---
 

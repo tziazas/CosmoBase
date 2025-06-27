@@ -48,6 +48,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     private readonly ILogger<CosmosRepository<T>> _logger;
     private readonly IMemoryCache _cache;
     private readonly ICosmosValidator<T> _validator;
+    private readonly IAuditFieldManager<T> _auditFieldManager;
     private bool _disposed;
 
     /// <summary>
@@ -57,13 +58,15 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <param name="logger">The logger for this repository</param>
     /// <param name="cache">The memory cache for count queries</param>
     /// <param name="validator">Generic Cosmos Validator</param>
+    /// <param name="auditFieldManager">Manages audit fields (including User Context)</param>
     /// <exception cref="CosmosConfigurationException">Thrown if configuration for <typeparamref name="T"/> is missing.</exception>
     public CosmosRepository(CosmosConfiguration configuration, ILogger<CosmosRepository<T>> logger, IMemoryCache cache,
-        ICosmosValidator<T> validator)
+        ICosmosValidator<T> validator, IAuditFieldManager<T> auditFieldManager)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _validator = validator;
+        _auditFieldManager = auditFieldManager;
 
         // Item‐level retry (Create/Read/Replace/Upsert/Delete/Patch)
         _cosmosRetryPolicy =
@@ -242,11 +245,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <inheritdoc/>
     public async Task<T> CreateItemAsync(T item, CancellationToken cancellationToken = default)
     {
-        item.CreatedOnUtc = DateTime.UtcNow;
-        item.UpdatedOnUtc = DateTime.UtcNow;
-        item.Deleted = false;
-
         _validator.ValidateDocument(item, "Create", _partitionKeyProperty);
+
+        // Set audit fields using the manager
+        _auditFieldManager.SetCreateAuditFields(item);
 
         // Execute under retry policy
         var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
@@ -273,7 +275,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <inheritdoc/>
     public async Task<T> ReplaceItemAsync(T item, CancellationToken cancellationToken = default)
     {
-        item.UpdatedOnUtc = DateTime.UtcNow;
+        _validator.ValidateDocument(item, "Replace", _partitionKeyProperty);
+
+        // Set audit fields using the manager
+        _auditFieldManager.SetUpdateAuditFields(item);
 
         // wrap in retry
         var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
@@ -300,7 +305,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <inheritdoc/>
     public async Task<T> UpsertItemAsync(T item, CancellationToken cancellationToken = default)
     {
-        item.UpdatedOnUtc = DateTime.UtcNow;
+        _validator.ValidateDocument(item, "Upsert", _partitionKeyProperty);
+
+        // Set audit fields using the manager (determines create vs update automatically)
+        _auditFieldManager.SetUpsertAuditFields(item);
 
         // wrap in retry
         var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
@@ -366,7 +374,11 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     {
         var item = await GetItemAsync(id, partitionKey, true, cancellationToken);
         if (item is null) return;
+
+        // Set the deleted flag and update audit fields
         item.Deleted = true;
+        _auditFieldManager.SetUpdateAuditFields(item);
+
         await ReplaceItemAsync(item, cancellationToken);
     }
 
@@ -892,7 +904,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         try
         {
             var result = await BulkExecuteAsync(itemList, partitionKeyValue, batchSize, maxConcurrency,
-                (batch, item) => { batch.UpsertItem(item); }, cancellationToken);
+                (batch, item) => { batch.UpsertItem(item); }, BulkOperationType.Upsert, cancellationToken);
 
             _logger.LogInformation(
                 "BulkUpsertAsync completed successfully: {SuccessCount} items processed, {TotalRUs} RUs consumed",
@@ -949,7 +961,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         try
         {
             var result = await BulkExecuteAsync(itemList, partitionKeyValue, batchSize, maxConcurrency,
-                (batch, item) => { batch.CreateItem(item); }, cancellationToken);
+                (batch, item) => { batch.CreateItem(item); }, BulkOperationType.Create, cancellationToken);
 
             _logger.LogInformation(
                 "BulkInsertAsync completed successfully: {SuccessCount} items processed, {TotalRUs} RUs consumed",
@@ -990,68 +1002,6 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             };
             throw insertException;
         }
-    }
-
-    /// <summary>
-    /// Executes batch operations (upsert/create) in parallel groups with comprehensive error handling.
-    /// </summary>
-    /// <param name="items">Items to process (already materialized).</param>
-    /// <param name="partitionKeyValue">Partition key for all items.</param>
-    /// <param name="batchSize">Number of items per batch.</param>
-    /// <param name="maxConcurrency">Max parallel batches.</param>
-    /// <param name="batchAction">Action to apply per item on the transactional batch.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Results indicating success/failure for each item.</returns>
-    /// <exception cref="CosmoBaseException">Thrown when batch operations fail.</exception>
-    private async Task<BulkExecuteResult<T>> BulkExecuteAsync(
-        IReadOnlyCollection<T> items, // Changed from IEnumerable<T> to IReadOnlyCollection<T>
-        string partitionKeyValue,
-        int batchSize,
-        int maxConcurrency,
-        Action<TransactionalBatch, T> batchAction,
-        CancellationToken cancellationToken = default)
-    {
-        // Note: Validation is done by the public methods (BulkUpsertAsync/BulkInsertAsync)
-        // Items are already materialized and validated
-
-        if (!items.Any())
-        {
-            _logger.LogDebug("BulkExecuteAsync: No items to process");
-            return new BulkExecuteResult<T>
-                { SuccessfulItems = new List<T>(), FailedItems = new List<BulkItemFailure<T>>() };
-        }
-
-        // Convert to list for indexing (items is already materialized, so this is cheap)
-        var itemList = items as List<T> ?? items.ToList();
-
-        // Split items into batches
-        var batches = CreateBatches(itemList, batchSize);
-        _logger.LogInformation("BulkExecuteAsync: Processing {ItemCount} items in {BatchCount} batches",
-            itemList.Count, batches.Count);
-
-        // Process batches with controlled concurrency
-        var results = await ProcessBatchesConcurrently(batches, partitionKeyValue, batchAction, maxConcurrency,
-            cancellationToken);
-
-        // Aggregate results
-        var aggregatedResult = AggregateBatchResults(results);
-
-        _logger.LogInformation(
-            "BulkExecuteAsync: Completed. Success: {SuccessCount}, Failed: {FailedCount}, Total RUs: {TotalRUs}",
-            aggregatedResult.SuccessfulItems.Count,
-            aggregatedResult.FailedItems.Count,
-            aggregatedResult.TotalRequestUnits
-        );
-
-        // Throw if there were any failures
-        if (aggregatedResult.FailedItems.Any())
-        {
-            var failureMessage =
-                $"Bulk operation completed with {aggregatedResult.FailedItems.Count} failures out of {itemList.Count} items";
-            throw new CosmoBaseException(failureMessage) { Data = { ["BulkResult"] = aggregatedResult } };
-        }
-
-        return aggregatedResult;
     }
 
     /// <inheritdoc/>
@@ -1128,6 +1078,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         List<List<T>> batches,
         string partitionKeyValue,
         Action<TransactionalBatch, T> batchAction,
+        BulkOperationType operationType,
         int maxConcurrency,
         CancellationToken cancellationToken)
     {
@@ -1144,7 +1095,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             async (batchItem, ct) =>
             {
                 var result = await ExecuteSingleBatch(batchItem.Batch, batchItem.Index, partitionKeyValue, batchAction,
-                    ct);
+                    operationType, ct);
                 results.Add(result);
             });
 
@@ -1159,17 +1110,16 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         int batchIndex,
         string partitionKeyValue,
         Action<TransactionalBatch, T> batchAction,
+        BulkOperationType operationType,
         CancellationToken cancellationToken)
     {
         var result = new BatchExecuteResult<T> { BatchIndex = batchIndex };
 
         try
         {
-            // Set audit fields for all items in batch
-            foreach (var item in batch)
-            {
-                item.UpdatedOnUtc = DateTime.UtcNow;
-            }
+            // Set audit fields for all items in batch using the manager
+            var isCreateOperation = operationType == BulkOperationType.Create;
+            _auditFieldManager.SetBulkAuditFields(batch, isCreateOperation);
 
             // Create transactional batch
             var txn = _writeContainer.CreateTransactionalBatch(new PartitionKey(partitionKeyValue));
@@ -1228,6 +1178,178 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Executes batch operations (upsert/create) in parallel groups with comprehensive error handling and audit field management.
+    /// This is the core method that orchestrates bulk operations with optimal performance and reliability.
+    /// </summary>
+    /// <param name="items">Items to process (already materialized and validated by public methods).</param>
+    /// <param name="partitionKeyValue">Partition key value for all items (must be consistent across all items).</param>
+    /// <param name="batchSize">Number of items per transactional batch (Cosmos DB limit: 100 items per batch).</param>
+    /// <param name="maxConcurrency">Maximum number of parallel batch executions to prevent overwhelming Cosmos DB.</param>
+    /// <param name="batchAction">Action delegate that defines the specific batch operation (CreateItem, UpsertItem, etc.).</param>
+    /// <param name="operationType">Type of bulk operation to determine proper audit field handling (Create vs Upsert).</param>
+    /// <param name="cancellationToken">Cancellation token for cooperative cancellation across all async operations.</param>
+    /// <returns>
+    /// Detailed results indicating success/failure for each item, total RU consumption, and operational metrics.
+    /// </returns>
+    /// <exception cref="CosmoBaseException">
+    /// Thrown when any batch operations fail. Contains detailed failure information in the Data property
+    /// under the "BulkResult" key for programmatic access to success/failure breakdown.
+    /// </exception>
+    /// <remarks>
+    /// This method implements several enterprise-grade patterns:
+    /// 
+    /// **Performance Optimizations:**
+    /// - Parallel batch execution with configurable concurrency limits
+    /// - Efficient item batching to maximize Cosmos DB throughput
+    /// - Bulk audit field updates to minimize per-item overhead
+    /// - Request unit tracking and telemetry for monitoring
+    /// 
+    /// **Reliability Features:**
+    /// - Comprehensive retry policies for transient failures
+    /// - Individual item failure tracking within failed batches
+    /// - Detailed error reporting with item-level context
+    /// - Graceful handling of partial batch failures
+    /// 
+    /// **Audit & Compliance:**
+    /// - Automatic audit field population based on operation type
+    /// - User context resolution for CreatedBy/UpdatedBy fields
+    /// - Timestamp management for CreatedOnUtc/UpdatedOnUtc fields
+    /// - Consistent audit behavior across all bulk operations
+    /// 
+    /// **Observability:**
+    /// - Structured logging with operation context and performance metrics
+    /// - OpenTelemetry-compatible metrics for monitoring and alerting
+    /// - Request unit consumption tracking for cost optimization
+    /// - Success rate reporting for operational dashboards
+    /// </remarks>
+    private async Task<BulkExecuteResult<T>> BulkExecuteAsync(
+        IReadOnlyCollection<T> items,
+        string partitionKeyValue,
+        int batchSize,
+        int maxConcurrency,
+        Action<TransactionalBatch, T> batchAction,
+        BulkOperationType operationType,
+        CancellationToken cancellationToken = default)
+    {
+        // =====================================================================================
+        // EARLY EXIT: Handle empty collections gracefully
+        // =====================================================================================
+        // Note: Input validation (null checks, parameter validation) is performed by the 
+        // public methods (BulkUpsertAsync/BulkInsertAsync) before calling this method.
+        // This separation of concerns keeps the core logic focused on execution.
+        if (!items.Any())
+        {
+            _logger.LogDebug("BulkExecuteAsync: No items to process for {OperationType} operation", operationType);
+            return new BulkExecuteResult<T>
+            {
+                SuccessfulItems = new List<T>(),
+                FailedItems = new List<BulkItemFailure<T>>(),
+                TotalRequestUnits = 0
+            };
+        }
+
+        // =====================================================================================
+        // PREPARATION: Convert collection and split into batches
+        // =====================================================================================
+        // Items are already materialized by the calling method to avoid multiple enumeration.
+        // This conversion is cheap since the collection is already in memory.
+        var itemList = items as List<T> ?? items.ToList();
+
+        // Split items into fixed-size batches for optimal Cosmos DB performance.
+        // Cosmos DB transactional batches have a limit of 100 items per batch.
+        var batches = CreateBatches(itemList, batchSize);
+
+        _logger.LogInformation(
+            "BulkExecuteAsync: Starting {OperationType} operation - {ItemCount} items split into {BatchCount} batches (batchSize: {BatchSize}, maxConcurrency: {MaxConcurrency})",
+            operationType,
+            itemList.Count,
+            batches.Count,
+            batchSize,
+            maxConcurrency
+        );
+
+        // =====================================================================================
+        // EXECUTION: Process batches with controlled concurrency
+        // =====================================================================================
+        // Use Parallel.ForEachAsync for optimal async concurrency control.
+        // This approach provides:
+        // - Built-in concurrency limiting via MaxDegreeOfParallelism
+        // - Proper async/await support without Task.Run overhead
+        // - Automatic load balancing across available threads
+        // - Cooperative cancellation support
+        var results = await ProcessBatchesConcurrently(
+            batches,
+            partitionKeyValue,
+            batchAction,
+            operationType,
+            maxConcurrency,
+            cancellationToken
+        );
+
+        // =====================================================================================
+        // AGGREGATION: Combine results from all batches
+        // =====================================================================================
+        // Aggregate individual batch results into a comprehensive summary.
+        // This includes successful items, failed items, and total RU consumption.
+        var aggregatedResult = AggregateBatchResults(results);
+
+        // =====================================================================================
+        // TELEMETRY: Log completion metrics for monitoring and debugging
+        // =====================================================================================
+        _logger.LogInformation(
+            "BulkExecuteAsync: {OperationType} operation completed - Success: {SuccessCount}/{TotalCount} ({SuccessRate:F1}%), Failed: {FailedCount}, Total RUs: {TotalRUs}",
+            operationType,
+            aggregatedResult.SuccessfulItems.Count,
+            itemList.Count,
+            aggregatedResult.SuccessRate,
+            aggregatedResult.FailedItems.Count,
+            aggregatedResult.TotalRequestUnits
+        );
+
+        // =====================================================================================
+        // ERROR HANDLING: Process failures and provide detailed error information
+        // =====================================================================================
+        // If any items failed, throw a comprehensive exception with detailed failure information.
+        // The exception includes the full result object in its Data dictionary, allowing
+        // calling code to access detailed success/failure breakdown for:
+        // - Retry logic for retryable failures
+        // - Error reporting and alerting
+        // - Partial success handling
+        // - Operational metrics and dashboards
+        if (aggregatedResult.FailedItems.Any())
+        {
+            var failureMessage =
+                $"Bulk {operationType.ToString().ToLower()} operation completed with {aggregatedResult.FailedItems.Count} failures out of {itemList.Count} items";
+
+            // Log detailed failure information for operational troubleshooting
+            _logger.LogWarning(
+                "BulkExecuteAsync: Partial failure in {OperationType} operation - {FailureDetails}",
+                operationType,
+                string.Join("; ", aggregatedResult.FailedItems.Take(5).Select(f =>
+                    $"Item '{f.Item.Id}': {f.StatusCode} - {f.ErrorMessage}"))
+            );
+
+            // Create exception with embedded result data for programmatic access
+            var exception = new CosmoBaseException(failureMessage)
+            {
+                Data =
+                {
+                    ["BulkResult"] = aggregatedResult,
+                    ["OperationType"] = operationType.ToString(),
+                    ["PartitionKey"] = partitionKeyValue
+                }
+            };
+
+            throw exception;
+        }
+
+        // =====================================================================================
+        // SUCCESS: Return comprehensive result with all operation details
+        // =====================================================================================
+        return aggregatedResult;
     }
 
     /// <summary>
