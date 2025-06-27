@@ -137,6 +137,8 @@ public static class ServiceCollectionExtensions
                         {
                             AllowBulkExecution = c.AllowBulkExecution ?? true,
                             ConnectionMode = ParseConnectionMode(c.ConnectionMode) ?? ConnectionMode.Direct,
+
+                            // Use configuration values or defaults
                             MaxRetryAttemptsOnRateLimitedRequests = c.MaxRetryAttempts ?? 9,
                             MaxRetryWaitTimeOnRateLimitedRequests =
                                 TimeSpan.FromSeconds(c.MaxRetryWaitTimeInSeconds ?? 30)

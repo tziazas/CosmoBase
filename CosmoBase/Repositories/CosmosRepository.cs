@@ -9,12 +9,9 @@ using CosmoBase.Abstractions.Interfaces;
 using CosmoBase.Abstractions.Models;
 using CosmoBase.Extensions;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Azure.Cosmos.Fluent;
 using Microsoft.Azure.Cosmos.Linq;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
-using Polly;
-using Polly.Retry;
 
 namespace CosmoBase.Repositories;
 
@@ -25,21 +22,6 @@ namespace CosmoBase.Repositories;
 /// <typeparam name="T">The document model type stored in Cosmos, must implement <see cref="ICosmosDataModel"/> and have a parameterless constructor.</typeparam>
 public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmosDataModel, new()
 {
-    // Define a static retry policy for transient CosmosExceptions
-    private readonly AsyncRetryPolicy<ItemResponse<T>> _cosmosRetryPolicy;
-
-    // Define a static retry policy for feed-iterator pages
-    private readonly IAsyncPolicy _cosmosFeedRetryPolicy;
-
-    // Define a static retry policy for transactional batch calls
-    private readonly AsyncRetryPolicy<TransactionalBatchResponse> _cosmosBatchRetryPolicy;
-
-    private static bool IsTransient(CosmosException ex) =>
-        ex.StatusCode == HttpStatusCode.RequestTimeout
-        || ex.StatusCode == HttpStatusCode.TooManyRequests
-        || ex.StatusCode == HttpStatusCode.ServiceUnavailable
-        || ex.StatusCode == HttpStatusCode.InternalServerError;
-
     private readonly CosmosClient _readClient;
     private readonly CosmosClient _writeClient;
     private readonly Container _readContainer;
@@ -52,101 +34,23 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     private bool _disposed;
 
     /// <summary>
-    /// Initializes a new instance using <paramref name="configuration"/> to locate containers.
+    /// Initializes a new instance using <paramref name="configuration"/> to locate containers and <paramref name="cosmosClients"/> for database access.
     /// </summary>
     /// <param name="configuration">Cosmos DB configuration settings.</param>
     /// <param name="logger">The logger for this repository</param>
     /// <param name="cache">The memory cache for count queries</param>
     /// <param name="validator">Generic Cosmos Validator</param>
     /// <param name="auditFieldManager">Manages audit fields (including User Context)</param>
-    /// <exception cref="CosmosConfigurationException">Thrown if configuration for <typeparamref name="T"/> is missing.</exception>
+    /// <param name="cosmosClients">Dictionary of pre-configured CosmosClient instances from dependency injection</param>
+    /// <exception cref="CosmosConfigurationException">Thrown if configuration for <typeparamref name="T"/> is missing or required clients are not found.</exception>
     public CosmosRepository(CosmosConfiguration configuration, ILogger<CosmosRepository<T>> logger, IMemoryCache cache,
-        ICosmosValidator<T> validator, IAuditFieldManager<T> auditFieldManager)
+        ICosmosValidator<T> validator, IAuditFieldManager<T> auditFieldManager,
+        IReadOnlyDictionary<string, CosmosClient> cosmosClients)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _validator = validator;
         _auditFieldManager = auditFieldManager;
-
-        // Item‐level retry (Create/Read/Replace/Upsert/Delete/Patch)
-        _cosmosRetryPolicy =
-            Policy<ItemResponse<T>>
-                .Handle<CosmosException>(IsTransient)
-                .WaitAndRetryAsync(
-                    retryCount: 3,
-                    sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                    onRetry: (outcome, delay, retryCount, context) =>
-                    {
-                        // outcome.Exception is the actual CosmosException
-                        var ex = outcome.Exception!;
-
-                        // increment retry counter
-                        CosmosRepositoryMetrics.RetryCount.Add(
-                            1,
-                            new("model", typeof(T).Name),
-                            new("operation", "ItemOperation")
-                        );
-
-                        _logger.LogWarning(
-                            ex,
-                            "Cosmos {Operation} retry {RetryCount} after {Delay}",
-                            context.OperationKey ?? "ItemOperation",
-                            retryCount,
-                            delay
-                        );
-                    }
-                );
-
-        // FeedIterator‐level retry (GetAllAsync, QueryAsync, paging, etc.)
-        _cosmosFeedRetryPolicy = Policy
-            .Handle<CosmosException>(IsTransient)
-            .WaitAndRetryAsync(
-                retryCount: 3,
-                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt)),
-                onRetry: (exception, delay, retryCount, context) =>
-                {
-                    // exception is the actual CosmosException
-                    CosmosRepositoryMetrics.RetryCount.Add(
-                        1,
-                        new("model", typeof(T).Name),
-                        new("operation", "FeedOperation")
-                    );
-
-                    _logger.LogWarning(
-                        exception,
-                        "Cosmos {Operation} retry {RetryCount} after {Delay}",
-                        context.OperationKey ?? "FeedOperation",
-                        retryCount,
-                        delay
-                    );
-                }
-            );
-
-        // Transactional‐batch retry (BulkUpsert/BulkInsert)
-        _cosmosBatchRetryPolicy = Policy<TransactionalBatchResponse>
-            .Handle<CosmosException>(IsTransient)
-            .WaitAndRetryAsync(
-                retryCount: 3,
-                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt)),
-                onRetry: (outcome, delay, retryCount, context) =>
-                {
-                    var ex = outcome.Exception!;
-
-                    CosmosRepositoryMetrics.RetryCount.Add(
-                        1,
-                        new("model", typeof(T).Name),
-                        new("operation", "BulkOperation")
-                    );
-
-                    _logger.LogWarning(
-                        ex,
-                        "Cosmos {Operation} retry {RetryCount} after {Delay}",
-                        context.OperationKey ?? "BulkOperation",
-                        retryCount,
-                        delay
-                    );
-                }
-            );
 
         // Models/Containers
         var modelName = typeof(T).Name;
@@ -160,38 +64,28 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         _partitionKeyProperty = modelConfig.PartitionKey;
 
-        var readClientConfig = configuration.CosmosClientConfigurations
-            .FirstOrDefault(x => x.Name.Equals(modelConfig.ReadCosmosClientConfigurationName,
-                StringComparison.InvariantCultureIgnoreCase));
-        if (readClientConfig == null)
+        // Get pre-configured clients from DI
+        if (!cosmosClients.TryGetValue(modelConfig.ReadCosmosClientConfigurationName, out var readClient))
         {
-            _logger.LogError("CosmosConfiguration: no read client config named {ReadConfigName} for model {ModelName}",
+            _logger.LogError("CosmosConfiguration: no read client named {ReadConfigName} for model {ModelName}",
                 modelConfig.ReadCosmosClientConfigurationName, modelName);
             throw new CosmosConfigurationException($"No read client config for {modelName}");
         }
 
-        var writeClientConfig = configuration.CosmosClientConfigurations
-            .FirstOrDefault(x => x.Name.Equals(modelConfig.WriteCosmosClientConfigurationName,
-                StringComparison.InvariantCultureIgnoreCase));
-        if (writeClientConfig == null)
+        if (!cosmosClients.TryGetValue(modelConfig.WriteCosmosClientConfigurationName, out var writeClient))
         {
-            _logger.LogError(
-                "CosmosConfiguration: no write client config named {WriteConfigName} for model {ModelName}",
+            _logger.LogError("CosmosConfiguration: no write client named {WriteConfigName} for model {ModelName}",
                 modelConfig.WriteCosmosClientConfigurationName, modelName);
             throw new CosmosConfigurationException($"No write client config for {modelName}");
         }
 
-        _readClient = new CosmosClientBuilder(readClientConfig.ConnectionString)
-            .WithThrottlingRetryOptions(TimeSpan.FromSeconds(15), 10000)
-            .WithBulkExecution(true)
-            .Build();
-        _readContainer = _readClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+        _readClient = readClient;
+        _writeClient = writeClient;
 
-        _writeClient = new CosmosClientBuilder(writeClientConfig.ConnectionString)
-            .WithThrottlingRetryOptions(TimeSpan.FromSeconds(15), 10000)
-            .WithBulkExecution(true)
-            .Build();
-        _writeContainer = _writeClient.GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+        _readContainer = _readClient
+            .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+        _writeContainer = _writeClient
+            .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
     }
 
     /// <inheritdoc/>
@@ -205,12 +99,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         {
             _validator.ValidateIdAndPartitionKey(id, partitionKey, "GetItem");
 
-            var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
-                _readContainer.ReadItemAsync<T>(
-                    id,
-                    new PartitionKey(partitionKey),
-                    cancellationToken: cancellationToken
-                )
+            var response = await _readContainer.ReadItemAsync<T>(
+                id,
+                new PartitionKey(partitionKey),
+                cancellationToken: cancellationToken
             );
 
             _logger.LogInformation(
@@ -250,13 +142,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         // Set audit fields using the manager
         _auditFieldManager.SetCreateAuditFields(item);
 
-        // Execute under retry policy
-        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
-            _writeContainer.CreateItemAsync(
-                item,
-                new PartitionKey(GetPartitionKeyValue(item)),
-                cancellationToken: cancellationToken
-            )
+        var response = await _writeContainer.CreateItemAsync(
+            item,
+            new PartitionKey(GetPartitionKeyValue(item)),
+            cancellationToken: cancellationToken
         );
 
         // Log RU charge and diagnostics
@@ -280,14 +169,11 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         // Set audit fields using the manager
         _auditFieldManager.SetUpdateAuditFields(item);
 
-        // wrap in retry
-        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
-            _writeContainer.ReplaceItemAsync(
-                item,
-                item.Id,
-                new PartitionKey(GetPartitionKeyValue(item)),
-                cancellationToken: cancellationToken
-            )
+        var response = await _writeContainer.ReplaceItemAsync(
+            item,
+            item.Id,
+            new PartitionKey(GetPartitionKeyValue(item)),
+            cancellationToken: cancellationToken
         );
 
         // log RU charge + diagnostics
@@ -310,13 +196,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         // Set audit fields using the manager (determines create vs update automatically)
         _auditFieldManager.SetUpsertAuditFields(item);
 
-        // wrap in retry
-        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
-            _writeContainer.UpsertItemAsync(
-                item,
-                new PartitionKey(GetPartitionKeyValue(item)),
-                cancellationToken: cancellationToken
-            )
+        var response = await _writeContainer.UpsertItemAsync(
+            item,
+            new PartitionKey(GetPartitionKeyValue(item)),
+            cancellationToken: cancellationToken
         );
 
         // log RU charge + diagnostics
@@ -350,13 +233,10 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             return;
         }
 
-        // wrap hard delete in retry policy
-        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
-            _writeContainer.DeleteItemAsync<T>(
-                id,
-                new PartitionKey(partitionKey),
-                cancellationToken: cancellationToken
-            )
+        var response = await _writeContainer.DeleteItemAsync<T>(
+            id,
+            new PartitionKey(partitionKey),
+            cancellationToken: cancellationToken
         );
 
         // log RU charge + diagnostics
@@ -422,12 +302,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         var remaining = take;
         while (iterator.HasMoreResults && (!remaining.HasValue || remaining > 0))
         {
-            // wrap each page read in retry
-            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
-                (_, ct) => iterator.ReadNextAsync(ct),
-                new Context("GetPage"),
-                cancellationToken
-            );
+            var page = await iterator.ReadNextAsync(cancellationToken);
 
             // log RUs + diagnostics for this page
             _logger.LogInformation(
@@ -473,11 +348,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     {
         while (iterator.HasMoreResults)
         {
-            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
-                (_, ct) => iterator.ReadNextAsync(ct),
-                new Context("GetPage"),
-                cancellationToken
-            );
+            var page = await iterator.ReadNextAsync(cancellationToken);
 
             _logger.LogInformation(
                 "Cosmos bulk-read page returned {Count} items; consumed {RequestCharge} RUs; Diagnostics: {Diagnostics}",
@@ -506,11 +377,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         var iterator = _readContainer.GetItemQueryIterator<int>(def, requestOptions: options);
 
-        var response = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<int>>(
-            (_, ct) => iterator.ReadNextAsync(ct),
-            new Context("GetCount"),
-            cancellationToken
-        );
+        var response = await iterator.ReadNextAsync(cancellationToken);
 
         CosmosRepositoryMetrics.RequestCharge.Record(
             response.RequestCharge,
@@ -537,11 +404,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         var iterator = _readContainer.GetItemQueryIterator<int>(def, requestOptions: options);
 
-        var response = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<int>>(
-            (_, ct) => iterator.ReadNextAsync(ct),
-            new Context("GetCount"),
-            cancellationToken
-        );
+        var response = await iterator.ReadNextAsync(cancellationToken);
 
         CosmosRepositoryMetrics.RequestCharge.Record(
             response.RequestCharge,
@@ -707,11 +570,9 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             MaxItemCount = pageSize
         };
 
-        // 1) Read the page under retry policy
-        var pageResponse = await _cosmosFeedRetryPolicy.ExecuteAsync(() =>
-            _readContainer.GetItemQueryIterator<T>(spec.ToCosmosQuery(), continuationToken, options)
-                .ReadNextAsync(cancellationToken)
-        );
+        var pageResponse = await _readContainer
+            .GetItemQueryIterator<T>(spec.ToCosmosQuery(), continuationToken, options)
+            .ReadNextAsync(cancellationToken);
 
         // 2) Record RU charge for the page
         CosmosRepositoryMetrics.RequestCharge.Record(
@@ -740,9 +601,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
                 var countSpec = spec.ConvertToCountQuery();
                 var countIterator = _readContainer.GetItemQueryIterator<int>(countSpec, requestOptions: options);
 
-                var countResponse = await _cosmosFeedRetryPolicy.ExecuteAsync(() =>
-                    countIterator.ReadNextAsync(cancellationToken)
-                );
+                var countResponse = await countIterator.ReadNextAsync(cancellationToken);
 
                 // Record RU for count query
                 CosmosRepositoryMetrics.RequestCharge.Record(
@@ -796,12 +655,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         while (iterator.HasMoreResults)
         {
-            // Read next page under retry policy
-            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
-                (_, ct) => iterator.ReadNextAsync(ct),
-                new Context("GetPage"),
-                cancellationToken
-            );
+            var page = await iterator.ReadNextAsync(cancellationToken);
 
             // Record RU charge
             CosmosRepositoryMetrics.RequestCharge.Record(
@@ -861,12 +715,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         while (iterator.HasMoreResults)
         {
-            // Execute under retry
-            var page = await _cosmosFeedRetryPolicy.ExecuteAsync<FeedResponse<T>>(
-                (_, ct) => iterator.ReadNextAsync(ct),
-                new Context("GetPage"),
-                cancellationToken
-            );
+            var page = await iterator.ReadNextAsync(cancellationToken);
 
             // Record RU charge
             CosmosRepositoryMetrics.RequestCharge.Record(
@@ -1013,14 +862,11 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     {
         var ops = spec.ToCosmosPatchOperations();
 
-        // 1) execute under item‐level retry policy
-        var response = await _cosmosRetryPolicy.ExecuteAsync(() =>
-            _writeContainer.PatchItemAsync<T>(
-                id,
-                new PartitionKey(partitionKey),
-                ops,
-                cancellationToken: cancellationToken
-            )
+        var response = await _writeContainer.PatchItemAsync<T>(
+            id,
+            new PartitionKey(partitionKey),
+            ops,
+            cancellationToken: cancellationToken
         );
 
         // 2) record RU charge in histogram
@@ -1128,10 +974,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
                 batchAction(txn, item);
             }
 
-            // Execute with retry policy
-            var batchResponse = await _cosmosBatchRetryPolicy.ExecuteAsync(() =>
-                txn.ExecuteAsync(cancellationToken)
-            );
+            var batchResponse = await txn.ExecuteAsync(cancellationToken);
 
             result.RequestUnits = batchResponse.RequestCharge;
 
