@@ -1,0 +1,13 @@
+<Project>
+    <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+    <!-- Disable GitVersion for all test projects -->
+    <PropertyGroup>
+        <EnableGitVersionTask>false</EnableGitVersionTask>
+    </PropertyGroup>
+
+    <!-- Remove GitVersion package reference for test projects -->
+    <ItemGroup>
+        <PackageReference Remove="GitVersion.MsBuild" />
+    </ItemGroup>
+</Project>

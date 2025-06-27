@@ -17,7 +17,7 @@
         <Copyright>Copyright © $(Company) $([System.DateTime]::Now.Year)</Copyright>
         <RepositoryUrl>https://github.com/tziazas/CosmoBase</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
         <PackageIcon>docs/images/cosmobase.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -37,26 +37,6 @@
         <VersionPrefix>1.0.0</VersionPrefix>
         <VersionSuffix>preview</VersionSuffix>
     </PropertyGroup>
-
-    <!-- GitVersion Configuration - USE .NET 9.0 VERSION -->
-    <PropertyGroup>
-        <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>
-        <!-- Use .NET 9.0 version since it's available in GitVersion 6.3.0 -->
-        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">$(NuGetPackageRoot)gitversion.msbuild/6.3.0/tools/net9.0/GitVersion.MsBuild.dll</GitVersionTaskAssembly>
-        <!-- Disable GitVersion during design-time builds to improve IDE performance -->
-        <GitVersion_NoFallback Condition="'$(DesignTimeBuild)' == 'true'">true</GitVersion_NoFallback>
-        <!-- Additional GitVersion settings -->
-        <GitVersion_UpdateAssemblyInfo>true</GitVersion_UpdateAssemblyInfo>
-        <GitVersion_UpdateAssemblyInfoFilename>false</GitVersion_UpdateAssemblyInfoFilename>
-    </PropertyGroup>
-
-    <!-- GitVersion Package Reference (version managed by Directory.Packages.props) -->
-    <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
-        <PackageReference Include="GitVersion.MsBuild">
-            <PrivateAssets>all</PrivateAssets>
-            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
-    </ItemGroup>
 
     <!-- Common Package Files -->
     <ItemGroup>
