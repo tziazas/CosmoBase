@@ -1,44 +1,64 @@
 <Project>
 
-    <!-- CRITICAL: Enable central package management -->
+    <!-- Framework and Language Settings -->
     <PropertyGroup>
-        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+        <TargetFramework>net9.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <NullableContextOptions>enable</NullableContextOptions>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     </PropertyGroup>
 
-    <!-- Package versions - EACH PACKAGE LISTED ONLY ONCE -->
+    <!-- Package Metadata (applied to all projects) -->
+    <PropertyGroup>
+        <Company>Achilleas Tziazas</Company>
+        <Authors>Achilleas Tziazas</Authors>
+        <Copyright>Copyright © $(Company) $([System.DateTime]::Now.Year)</Copyright>
+        <RepositoryUrl>https://github.com/tziazas/CosmoBase</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+        <PackageIcon>docs/images/cosmobase.png</PackageIcon>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <!-- Build Settings -->
+    <PropertyGroup>
+        <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+        <WarningsAsErrors />
+        <WarningsNotAsErrors />
+        <NoWarn>$(NoWarn);CS1591;CS8618;CS8625;CS8602;CS8604</NoWarn> <!-- Missing XML comment warnings and nullable warnings -->
+    </PropertyGroup>
+
+    <!-- Version Settings (GitVersion will override these) -->
+    <PropertyGroup>
+        <VersionPrefix>1.0.0</VersionPrefix>
+        <VersionSuffix>preview</VersionSuffix>
+    </PropertyGroup>
+
+    <!-- GitVersion Configuration - PROPERLY CONFIGURED FOR .NET 9.0 -->
+    <PropertyGroup>
+        <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>
+        <!-- Force specific .NET 8.0 runtime for GitVersion stability (handles .NET 9.0 compatibility) -->
+        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">$(MSBuildThisFileDirectory)..\packages\gitversion.msbuild\6.3.0\tools\net8.0\GitVersion.MsBuild.dll</GitVersionTaskAssembly>
+        <!-- Disable GitVersion during design-time builds to improve IDE performance -->
+        <GitVersion_NoFallback Condition="'$(DesignTimeBuild)' == 'true'">true</GitVersion_NoFallback>
+    </PropertyGroup>
+
+    <!-- GitVersion Package Reference (version managed by Directory.Packages.props) -->
+    <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
+        <PackageReference Include="GitVersion.MsBuild">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+    </ItemGroup>
+
+    <!-- Common Package Files -->
     <ItemGroup>
-        <!-- Azure Cosmos DB -->
-        <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.52.0" />
-
-        <!-- Microsoft Extensions (.NET 9) -->
-        <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Configuration.Extensions" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.6" />
-        <PackageVersion Include="Microsoft.Extensions.Options.DataAnnotations" Version="9.0.6" />
-
-        <!-- Serialization -->
-        <PackageVersion Include="System.Text.Json" Version="9.0.0" />
-        <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
-
-        <!-- Resilience -->
-        <PackageVersion Include="Polly" Version="8.6.1" />
-
-        <!-- Build Tools -->
-        <PackageVersion Include="GitVersion.MsBuild" Version="6.3.0" />
-
-        <!-- Testing (only include if you have test projects) -->
-        <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-        <PackageVersion Include="MSTest.TestAdapter" Version="3.6.0" />
-        <PackageVersion Include="MSTest.TestFramework" Version="3.6.0" />
-        <PackageVersion Include="Moq" Version="4.20.72" />
-        <PackageVersion Include="FluentAssertions" Version="7.0.0" />
+        <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
+        <None Include="$(MSBuildThisFileDirectory)docs/images/cosmobase.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)docs/images/cosmobase.png')" />
     </ItemGroup>
 
 </Project>

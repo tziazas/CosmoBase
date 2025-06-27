@@ -4,8 +4,6 @@
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
         <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
-        <TargetFramework>.net9.0</TargetFramework>
-        <Nullable>enable</Nullable>
     </PropertyGroup>
 
     <!-- Package versions - EACH PACKAGE LISTED ONLY ONCE -->
