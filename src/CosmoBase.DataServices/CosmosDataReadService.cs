@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Threading;
-using System.Threading.Tasks;
 using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
@@ -503,25 +498,12 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto>
     }
 
     /// <inheritdoc />
-    Task<TDto?> IDataReadService<TDto, string>.GetByIdAsync(string id, CancellationToken cancellationToken)
+    public Task<TDto> GetByIdAsync(string id, CancellationToken cancellationToken)
     {
         _logger?.LogWarning("Attempted to call unsupported GetByIdAsync method with ID only: {DocumentId}", id);
         throw new CosmoBaseException(
             $"Cosmos DB operations require both document ID and partition key. " +
             $"Use GetByIdAsync(string id, string partitionKey, bool includeDeleted) instead. " +
             $"Document ID: {id}");
-    }
-
-    /// <inheritdoc />
-    IAsyncEnumerable<TDto> IDataReadService<TDto, string>.GetAllAsync(CancellationToken cancellationToken)
-    {
-        return GetAllAsync(cancellationToken);
-    }
-
-    /// <inheritdoc />
-    IAsyncEnumerable<TDto> IDataReadService<TDto, string>.QueryAsync(ISpecification<TDto> specification,
-        CancellationToken cancellationToken)
-    {
-        return QueryAsync(specification, cancellationToken);
     }
 }

@@ -2,15 +2,6 @@
   "version": 2,
   "dependencies": {
     "net9.0": {
-      "GitVersion.MsBuild": {
-        "type": "Direct",
-        "requested": "[6.3.0, )",
-        "resolved": "6.3.0",
-        "contentHash": "suTxk2mb96kABSJZrSGvzh9423fVbdOM18nSQOrLbp0tKrX+khi1ytfkHzoPI0I2xvmDzTsfKtHDd61Zc5MX0A==",
-        "dependencies": {
-          "System.Collections.Immutable": "9.0.2"
-        }
-      },
       "Microsoft.Azure.Cosmos": {
         "type": "Direct",
         "requested": "[3.52.0, )",
@@ -313,8 +304,8 @@
       },
       "System.Collections.Immutable": {
         "type": "Transitive",
-        "resolved": "9.0.2",
-        "contentHash": "QKh9+kczG7TQbQZ6tF2S6bK9B8ewHXEkYmMP2iqefzwJEfEkiflheAX6VEaPLJ6Tq9RoKuQ5R3qPYla6wJ6Opg=="
+        "resolved": "1.7.0",
+        "contentHash": "RVSM6wZUo6L2y6P3vN6gjUtyJ2IF2RVtrepF3J7nrDKfFQd5u/SnSUFclchYQis8/k5scHy9E+fVeKVQLnnkzw=="
       },
       "System.Configuration.ConfigurationManager": {
         "type": "Transitive",

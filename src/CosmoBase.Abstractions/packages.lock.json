@@ -1,21 +1,6 @@
 {
   "version": 2,
   "dependencies": {
-    "net9.0": {
-      "GitVersion.MsBuild": {
-        "type": "Direct",
-        "requested": "[6.3.0, )",
-        "resolved": "6.3.0",
-        "contentHash": "suTxk2mb96kABSJZrSGvzh9423fVbdOM18nSQOrLbp0tKrX+khi1ytfkHzoPI0I2xvmDzTsfKtHDd61Zc5MX0A==",
-        "dependencies": {
-          "System.Collections.Immutable": "9.0.2"
-        }
-      },
-      "System.Collections.Immutable": {
-        "type": "Transitive",
-        "resolved": "9.0.2",
-        "contentHash": "QKh9+kczG7TQbQZ6tF2S6bK9B8ewHXEkYmMP2iqefzwJEfEkiflheAX6VEaPLJ6Tq9RoKuQ5R3qPYla6wJ6Opg=="
-      }
-    }
+    "net9.0": {}
   }
 }

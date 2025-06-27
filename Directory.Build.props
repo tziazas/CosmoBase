@@ -38,13 +38,16 @@
         <VersionSuffix>preview</VersionSuffix>
     </PropertyGroup>
 
-    <!-- GitVersion Configuration - PROPERLY CONFIGURED FOR .NET 9.0 -->
+    <!-- GitVersion Configuration - USE .NET 9.0 VERSION -->
     <PropertyGroup>
         <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>
-        <!-- Force specific .NET 8.0 runtime for GitVersion stability (handles .NET 9.0 compatibility) -->
-        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">$(MSBuildThisFileDirectory)..\packages\gitversion.msbuild\6.3.0\tools\net8.0\GitVersion.MsBuild.dll</GitVersionTaskAssembly>
+        <!-- Use .NET 9.0 version since it's available in GitVersion 6.3.0 -->
+        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">$(NuGetPackageRoot)gitversion.msbuild/6.3.0/tools/net9.0/GitVersion.MsBuild.dll</GitVersionTaskAssembly>
         <!-- Disable GitVersion during design-time builds to improve IDE performance -->
         <GitVersion_NoFallback Condition="'$(DesignTimeBuild)' == 'true'">true</GitVersion_NoFallback>
+        <!-- Additional GitVersion settings -->
+        <GitVersion_UpdateAssemblyInfo>true</GitVersion_UpdateAssemblyInfo>
+        <GitVersion_UpdateAssemblyInfoFilename>false</GitVersion_UpdateAssemblyInfoFilename>
     </PropertyGroup>
 
     <!-- GitVersion Package Reference (version managed by Directory.Packages.props) -->

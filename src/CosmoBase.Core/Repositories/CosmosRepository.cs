@@ -1,11 +1,6 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Runtime.CompilerServices;
-using System.Threading;
-using System.Threading.Tasks;
 using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Exceptions;
@@ -1061,7 +1056,7 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// - Detailed error reporting with item-level context
     /// - Graceful handling of partial batch failures
     /// 
-    /// **Audit & Compliance:**
+    /// **Audit &amp; Compliance:**
     /// - Automatic audit field population based on operation type
     /// - User context resolution for CreatedBy/UpdatedBy fields
     /// - Timestamp management for CreatedOnUtc/UpdatedOnUtc fields
