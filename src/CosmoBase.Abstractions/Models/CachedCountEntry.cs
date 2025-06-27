@@ -1,3 +1,5 @@
+using System;
+
 namespace CosmoBase.Abstractions.Models;
 
 public class CachedCountEntry

@@ -1,8 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
+        
+        <!-- Package Identity -->
+        <PackageId>CosmoBase.DataServices</PackageId>
+        <Title>CosmoBase Data Services</Title>
+        <Description>High-level data services for CosmoBase with automatic DTO/DAO mapping, caching, and advanced query capabilities (.NET 9)</Description>
+        <PackageTags>cosmosdb;dataservices;mapping;dto;dao;caching;queries;net9</PackageTags>
+
+        <!-- Additional package-specific metadata -->
+        <Summary>Provides CosmosDataReadService and CosmosDataWriteService for simplified data operations</Summary>
+        <PackageReleaseNotes>
+            - High-level data services built on CosmoBase.Core
+            - Automatic DTO/DAO mapping capabilities
+            - Built-in caching and performance optimizations
+            - Simplified API for common CRUD operations
+            - Advanced querying with strongly-typed specifications
+        </PackageReleaseNotes>
         <Nullable>enable</Nullable>
     </PropertyGroup>
 

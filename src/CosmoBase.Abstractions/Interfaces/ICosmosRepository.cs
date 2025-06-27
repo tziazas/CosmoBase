@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Filters;
 
@@ -24,7 +29,7 @@ public interface ICosmosRepository<T> : IDisposable
     where T : class, ICosmosDataModel, new()
 {
     /// <summary>
-    /// Exposes an <see cref="IQueryable{T}"/> over the container for custom LINQ queries.
+    /// Exposes an <see cref="IQueryable"/> over the container for custom LINQ queries.
     /// </summary>
     IQueryable<T> Queryable { get; }
 

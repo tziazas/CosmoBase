@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using CosmoBase.Abstractions.Filters;
 using Microsoft.Azure.Cosmos;
 

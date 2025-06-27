@@ -1,23 +1,45 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <!-- Package Identity (Directory.Build.props handles common properties) -->
         <PackageId>CosmoBase</PackageId>
-        <Version>1.0.0</Version>
-        <Authors>Achilleas Tziazas</Authors>
-        <Description>CosmoBase: a lightweight .NET toolkit for bulk-writes, paging, and flexible querying on Azure Cosmos DB.</Description>
-        <PackageProjectUrl>https://github.com/tziazas/CosmoBase</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/tziazas/CosmoBase.git</RepositoryUrl>
-        <RepositoryType>git</RepositoryType>
-        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-        <PackageTags>CosmosDb;Azure;Bulk;Paging;Repository;DataServices</PackageTags>
+        <Title>CosmoBase</Title>
+        <Description>Complete Azure Cosmos DB library with enterprise features for .NET 9 including repository pattern, caching, bulk operations, validation, and comprehensive audit trails</Description>
+        <PackageTags>cosmosdb;azure;nosql;database;repository;orm;caching;bulk-operations;audit;validation;dataservices;dependencyinjection;net9</PackageTags>
+
+        <!-- Meta-package specific settings -->
+        <Summary>All-in-one Cosmos DB toolkit - install this package to get the complete CosmoBase experience</Summary>
+        <PackageType>DotnetTool</PackageType>
+        <PackageReleaseNotes>
+            Complete CosmoBase package including:
+            - CosmoBase.Abstractions: Core interfaces and models
+            - CosmoBase.Core: Repository pattern with caching and validation
+            - CosmoBase.DataServices: High-level data services with DTO mapping
+            - CosmoBase.DependencyInjection: Easy service registration
+
+            Install this single package to get everything you need for Azure Cosmos DB development.
+        </PackageReleaseNotes>
+
+        <!-- This is a meta-package - no assemblies, just dependencies -->
+        <IncludeBuildOutput>false</IncludeBuildOutput>
+        <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
+
+        <!-- Don't generate package on every build for meta-package -->
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     </PropertyGroup>
 
+    <!-- Project References - ALL sub-packages -->
     <ItemGroup>
-      <ProjectReference Include="..\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
+        <ProjectReference Include="..\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
+        <ProjectReference Include="..\CosmoBase.Core\CosmoBase.Core.csproj" />
+        <ProjectReference Include="..\CosmoBase.DataServices\CosmoBase.DataServices.csproj" />
+        <ProjectReference Include="..\CosmoBase.DependencyInjection\CosmoBase.DependencyInjection.csproj" />
+    </ItemGroup>
+
+    <!-- Meta-package should not have its own source files -->
+    <ItemGroup>
+        <Compile Remove="**/*.cs" />
+        <None Include="**/*.cs" />
     </ItemGroup>
 
 </Project>

@@ -1,31 +1,57 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
+        <!-- Package Identity (Directory.Build.props handles common properties) -->
+        <PackageId>CosmoBase.Core</PackageId>
+        <Title>CosmoBase Core</Title>
+        <Description>Core implementation of CosmoBase Azure Cosmos DB library with repository pattern, caching, validation, and enterprise features (.NET 9)</Description>
+        <PackageTags>cosmosdb;core;repository;caching;validation;audit;bulk-operations;net9</PackageTags>
+
+        <!-- Package-specific metadata -->
+        <Summary>Production-ready Cosmos DB repository with caching, validation, audit trails, and bulk operations</Summary>
+        <PackageReleaseNotes>
+            - Enterprise-grade CosmosRepository implementation
+            - Built-in caching with configurable strategies
+            - Comprehensive validation framework
+            - Automatic audit field management
+            - High-performance bulk operations
+            - Advanced querying with specifications
+            - Retry policies and resilience patterns
+        </PackageReleaseNotes>
     </PropertyGroup>
 
+    <!-- Project References -->
     <ItemGroup>
+        <ProjectReference Include="..\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
+    </ItemGroup>
+
+    <!-- NuGet Package Dependencies -->
+    <ItemGroup>
+        <!-- Core Cosmos DB SDK -->
+        <PackageReference Include="Microsoft.Azure.Cosmos" />
+
+        <!-- Microsoft Extensions - Core functionality -->
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+        <PackageReference Include="Microsoft.Extensions.Options" />
+        <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
+        <PackageReference Include="Newtonsoft.Json" />
+
+        <!-- Resilience and Retry Policies -->
+        <PackageReference Include="Polly" />
+
+        <!-- JSON Serialization (if needed for specific Cosmos scenarios) -->
+        <PackageReference Include="System.Text.Json" />
+
+        <!-- Remove Newtonsoft.Json unless specifically needed -->
+        <!-- <PackageReference Include="Newtonsoft.Json" /> -->
+    </ItemGroup>
+
+    <!-- Remove empty Filters folder reference -->
+    <!-- <ItemGroup>
       <Folder Include="Filters\" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.52.0" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="9.0.6" />
-        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-        <PackageReference Include="Polly" Version="8.6.1" />
-    </ItemGroup>
-
-    <ItemGroup>
-      <ProjectReference Include="..\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
-    </ItemGroup>
+    </ItemGroup> -->
 
 </Project>

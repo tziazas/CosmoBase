@@ -1,3 +1,4 @@
+using System;
 using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Core.Services;
 using Microsoft.Extensions.Configuration;

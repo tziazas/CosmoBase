@@ -1,3 +1,4 @@
+using System;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Models;
 using Microsoft.Azure.Cosmos;
@@ -43,7 +44,6 @@ internal static class SqlQueryExtensions
         
         var originalQueryText = sql.QueryText;
 
-        // Replace SELECT * with SELECT VALUE COUNT(1)
         var countQueryText = System.Text.RegularExpressions.Regex.Replace(
             originalQueryText,
             @"^\s*SELECT\s+\*\s+FROM",

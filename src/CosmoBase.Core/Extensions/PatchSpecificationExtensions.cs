@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using CosmoBase.Abstractions.Filters;
 using Microsoft.Azure.Cosmos;
 
@@ -7,7 +10,7 @@ internal static class PatchSpecificationExtensions
 {
     /// <summary>
     /// Maps each <see cref="PatchOperationSpecification"/> to a <see cref="PatchOperation"/>,
-    /// returning an <see cref="IReadOnlyList{PatchOperation}"/> for use with the Cosmos SDK.
+    /// returning an <see cref="IReadOnlyList{T}"/> for use with the Cosmos SDK.
     /// </summary>
     /// <param name="spec">The abstract patch specification containing operations.</param>
     /// <returns>A list of SDK <see cref="PatchOperation"/> objects.</returns>

@@ -1,22 +1,32 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <!-- Package Identity (Directory.Build.props handles common properties) -->
         <PackageId>CosmoBase.Abstractions</PackageId>
-        <Version>1.0.0</Version>
-        <Authors>tziazas</Authors>
-        <Description>CosmoBase abstractions: DTOs, interfaces, enums.</Description>
-        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-        <RepositoryUrl>https://github.com/tziazas/CosmoBase.git</RepositoryUrl>
+        <Title>CosmoBase Abstractions</Title>
+        <Description>Core interfaces, models, and abstractions for CosmoBase Azure Cosmos DB library (.NET 9). Pure abstractions with no dependencies - perfect for library authors and dependency inversion.</Description>
+        <PackageTags>cosmosdb;abstractions;interfaces;models;enums;specifications;net9</PackageTags>
+
+        <!-- Package-specific metadata -->
+        <Summary>Foundational abstractions for CosmoBase - interfaces, models, enums, and specifications</Summary>
+        <PackageReleaseNotes>
+            Core abstractions including:
+            - Repository and service interfaces (ICosmosRepository, ICosmosDataService)
+            - Data model contracts (ICosmosDataModel, IUserContext)
+            - Configuration models (CosmosConfiguration, CosmoBaseOptions)
+            - Query specifications and filters
+            - Enums and constants
+            - Exception types
+
+            Zero dependencies - safe for library authors to reference.
+        </PackageReleaseNotes>
+
+        <!-- This is a pure abstractions package -->
+        <PackageType>Dependency</PackageType>
+        <Nullable>enable</Nullable>
     </PropertyGroup>
 
-    <!-- Enable XML doc generation in the .csproj so the comments are compiled into a .xml file alongside the DLL -->
-    <PropertyGroup>
-        <GenerateDocumentationFile>true</GenerateDocumentationFile>
-        <NoWarn>$(NoWarn);1591</NoWarn>  <!-- suppress “missing docs” if you need -->
-    </PropertyGroup>
+    <!-- No project or package references - pure abstractions! -->
+    <!-- This is the foundation package that others build upon -->
 
 </Project>

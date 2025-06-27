@@ -1,3 +1,4 @@
+using System;
 using CosmoBase.Abstractions.Interfaces;
 
 namespace CosmoBase.Core.Services;
@@ -7,7 +8,7 @@ namespace CosmoBase.Core.Services;
 /// </summary>
 public class DelegateUserContext : IUserContext
 {
-    private readonly Func<string?> _userProvider;
+    private readonly Func<string> _userProvider;
 
     /// <summary>
     /// Initializes a new instance with the specified user provider function.

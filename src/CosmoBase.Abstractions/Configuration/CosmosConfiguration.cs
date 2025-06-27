@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace CosmoBase.Abstractions.Configuration;
 
 public class CosmosConfiguration

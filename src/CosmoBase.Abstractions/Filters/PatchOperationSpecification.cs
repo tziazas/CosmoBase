@@ -1,3 +1,4 @@
+using System;
 using CosmoBase.Abstractions.Enums;
 
 namespace CosmoBase.Abstractions.Filters;

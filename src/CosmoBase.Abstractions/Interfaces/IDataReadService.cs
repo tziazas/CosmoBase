@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using CosmoBase.Abstractions.Filters;
 
 namespace CosmoBase.Abstractions.Interfaces;
@@ -9,7 +12,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 public interface IDataReadService<T, in TKey>
 {
     /// <summary>Fetch a single entity by its key, or null if not found.</summary>
-    Task<T?> GetByIdAsync(
+    Task<T> GetByIdAsync(
         TKey id,
         CancellationToken cancellationToken = default);
 
