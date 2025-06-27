@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+    
+    <ItemGroup>
+        <ProjectReference Include="..\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
+        <ProjectReference Include="..\CosmoBase.Core\CosmoBase.Core.csproj" />
+        <ProjectReference Include="..\CosmoBase.DataServices\CosmoBase.DataServices.csproj" />
+    </ItemGroup>
+
+</Project>
