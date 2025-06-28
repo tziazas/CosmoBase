@@ -9,7 +9,7 @@
 
         <!-- Meta-package specific settings -->
         <Summary>All-in-one Cosmos DB toolkit - install this package to get the complete CosmoBase experience</Summary>
-        <PackageType>DotnetTool</PackageType>
+        
         <PackageReleaseNotes>
             Complete CosmoBase package including:
             - CosmoBase.Abstractions: Core interfaces and models
@@ -21,7 +21,8 @@
         </PackageReleaseNotes>
 
         <!-- This is a meta-package - no assemblies, just dependencies -->
-        <IncludeBuildOutput>false</IncludeBuildOutput>
+        <IncludeBuildOutput>true</IncludeBuildOutput>
+        <IncludeSymbols>true</IncludeSymbols>
         <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
 
         <!-- Don't generate package on every build for meta-package -->

@@ -245,7 +245,7 @@ public class DataServicesIntegrationTests(
     }
 
     [Fact]
-    public async Task Debug_Repository_Validation()
+    public Task Debug_Repository_Validation()
     {
         var repository = fixture.GetRequiredService<ICosmosRepository<TestProductDao>>();
         var validator = fixture.GetRequiredService<ICosmosValidator<TestProductDao>>();
@@ -278,6 +278,8 @@ public class DataServicesIntegrationTests(
             output.WriteLine($"❌ Validation failed: {ex.Message}");
             output.WriteLine($"Full exception: {ex}");
         }
+
+        return Task.CompletedTask;
     }
 
     [Fact]
@@ -439,7 +441,7 @@ public class DataServicesIntegrationTests(
     }
 
     [Fact]
-    public async Task Debug_Repository_Step_By_Step()
+    public Task Debug_Repository_Step_By_Step()
     {
         // Get the repository and trace through its steps
         var repository = fixture.GetRequiredService<ICosmosRepository<TestProductDao>>();
@@ -467,7 +469,7 @@ public class DataServicesIntegrationTests(
         catch (Exception ex)
         {
             output.WriteLine($"Step 2: ❌ Validation failed: {ex.Message}");
-            return;
+            return Task.CompletedTask;
         }
 
         // Step 3: Audit field management
@@ -481,7 +483,7 @@ public class DataServicesIntegrationTests(
         catch (Exception ex)
         {
             output.WriteLine($"Step 3: ❌ Audit fields failed: {ex.Message}");
-            return;
+            return Task.CompletedTask;
         }
 
         // Step 4: Get partition key value (this should work based on earlier tests)
@@ -489,6 +491,7 @@ public class DataServicesIntegrationTests(
         output.WriteLine($"Step 4: Partition key value: '{partitionKeyValue}'");
 
         output.WriteLine("Issue must be in the actual Cosmos SDK call within the repository!");
+        return Task.CompletedTask;
     }
 
     [Fact]
@@ -1001,7 +1004,7 @@ public class DataServicesIntegrationTests(
     }
     
     [Fact]
-    public async Task Debug_Serialization_Settings()
+    public Task Debug_Serialization_Settings()
     {
         // Check if CosmoBase is registering custom serialization settings
         var cosmosClients = fixture.ServiceProvider.GetRequiredService<IReadOnlyDictionary<string, CosmosClient>>();
@@ -1044,6 +1047,8 @@ public class DataServicesIntegrationTests(
         {
             output.WriteLine($"Newtonsoft.Json failed: {ex.Message}");
         }
+
+        return Task.CompletedTask;
     }
     
     [Fact]
