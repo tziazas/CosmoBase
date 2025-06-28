@@ -90,18 +90,18 @@ In `appsettings.json`:
     ],
     "CosmosModelConfigurations": [
       {
-        "ModelName": "Product",
+        "ModelName": "ProductDao",
         "DatabaseName": "ProductCatalog",
         "CollectionName": "Products",
-        "PartitionKey": "/category",
+        "PartitionKey": "Category",
         "ReadCosmosClientConfigurationName": "ReadReplica",
         "WriteCosmosClientConfigurationName": "Primary"
       },
       {
-        "ModelName": "Order",
+        "ModelName": "OrderDao",
         "DatabaseName": "OrderManagement",
         "CollectionName": "Orders",
-        "PartitionKey": "/customerId",
+        "PartitionKey": "CustomerId",
         "ReadCosmosClientConfigurationName": "Primary",
         "WriteCosmosClientConfigurationName": "Primary"
       }
@@ -109,6 +109,12 @@ In `appsettings.json`:
   }
 }
 ```
+
+> **⚠️ Common Configuration Pitfalls:**
+> - **ModelName**: Must match your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`)
+> - **PartitionKey**: Must be the property name from your DAO class (e.g., `"Category"`, not `"/category"`)
+>
+> These are the most common configuration mistakes that cause runtime errors!
 
 ### 2. Register CosmoBase with User Context
 
@@ -118,7 +124,6 @@ In `appsettings.json`:
 ```csharp
 using CosmoBase.DependencyInjection;
 using CosmoBase.Abstractions.Interfaces;
-using CosmoBase.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -143,12 +148,12 @@ public class WebUserContext : IUserContext
 
 // Register HTTP context accessor and custom user context
 builder.Services.AddHttpContextAccessor();
-var userContext = new WebUserContext(serviceProvider.GetRequiredService<IHttpContextAccessor>());
+builder.Services.AddSingleton<IUserContext, WebUserContext>();
 
 // Register CosmoBase with user context
 builder.Services.AddCosmoBase(
     builder.Configuration, 
-    userContext,
+    builder.Services.BuildServiceProvider().GetRequiredService<IUserContext>(),
     config =>
     {
         // Optional: Override specific settings
@@ -195,12 +200,12 @@ var app = builder.Build();
 ```csharp
 public class ProductService
 {
-    private readonly IDataReadService<Product>  _reader;
-    private readonly IDataWriteService<Product> _writer;
+    private readonly ICosmosDataReadService<Product, ProductDao> _reader;
+    private readonly ICosmosDataWriteService<Product, ProductDao> _writer;
 
     public ProductService(
-        IDataReadService<Product> reader,
-        IDataWriteService<Product> writer)
+        ICosmosDataReadService<Product, ProductDao> reader,
+        ICosmosDataWriteService<Product, ProductDao> writer)
     {
         _reader = reader;
         _writer = writer;
@@ -208,21 +213,20 @@ public class ProductService
 
     public async Task ProcessProductsAsync()
     {
-        // Bulk save with automatic validation, retry, and audit fields
-        var newProducts = GetNewProductDtos();
-        await _writer.SaveAsync(newProducts);
+        // Create with automatic validation, retry, and audit fields
+        var newProduct = new Product { Id = "123", Name = "Widget" };
+        await _writer.CreateAsync(newProduct);
         // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically set
 
         // Stream products with intelligent caching
-        await foreach (var product in _reader.GetAllAsyncEnumerable(
-            cancellationToken: CancellationToken.None,
+        await foreach (var product in _reader.GetAllAsync(
             limit: 100, offset: 0, count: 500))
         {
             await ProcessProduct(product);
         }
 
         // Get cached count (15-minute cache)
-        var totalCount = await _reader.GetCountAsync("electronics", cacheMinutes: 15);
+        var totalCount = await _reader.GetCountWithCacheAsync("electronics", 15);
     }
 }
 ```
@@ -234,9 +238,9 @@ For advanced scenarios requiring more control:
 ```csharp
 public class AdvancedProductService
 {
-    private readonly ICosmosRepository<ProductDocument> _repository;
+    private readonly ICosmosRepository<ProductDao> _repository;
 
-    public AdvancedProductService(ICosmosRepository<ProductDocument> repository)
+    public AdvancedProductService(ICosmosRepository<ProductDao> repository)
     {
         _repository = repository;
     }
@@ -262,10 +266,9 @@ public class AdvancedProductService
             includeDeleted: false);
 
         // Create with automatic audit fields
-        var newProduct = new ProductDocument 
+        var newProduct = new ProductDao 
         { 
-            Id = "new-product", 
-            Category = "electronics" 
+            Id = "new-product"
         };
         await _repository.CreateItemAsync(newProduct);
         // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically populated
@@ -281,7 +284,7 @@ public class AdvancedProductService
         }
         catch (CosmoBaseException ex) when (ex.Data.Contains("BulkUpsertResult"))
         {
-            var result = (BulkExecuteResult<ProductDocument>)ex.Data["BulkUpsertResult"];
+            var result = (BulkExecuteResult<ProductDao>)ex.Data["BulkUpsertResult"]!;
             HandlePartialFailure(result);
         }
 
@@ -303,7 +306,7 @@ CosmoBase automatically manages audit fields across all operations:
 
 ```csharp
 // All CRUD operations automatically set audit fields
-var product = new Product { Id = "123", Name = "Widget" };
+var product = new ProductDao { Id = "123", Name = "Widget" };
 
 // Create operation sets all fields
 await repository.CreateItemAsync(product);
@@ -377,9 +380,9 @@ Extensible validation system with detailed error reporting:
 
 ```csharp
 // Custom validator example
-public class ProductValidator : CosmosValidator<Product>
+public class ProductValidator : CosmosValidator<ProductDao>
 {
-    public override void ValidateDocument(Product item, string operation, string partitionKeyProperty)
+    public override void ValidateDocument(ProductDao item, string operation, string partitionKeyProperty)
     {
         base.ValidateDocument(item, operation, partitionKeyProperty);
         
@@ -393,7 +396,7 @@ public class ProductValidator : CosmosValidator<Product>
 }
 
 // Register custom validator
-services.AddSingleton<ICosmosValidator<Product>, ProductValidator>();
+services.AddSingleton<ICosmosValidator<ProductDao>, ProductValidator>();
 ```
 
 ### **Soft Delete Support**
@@ -425,7 +428,7 @@ try
 }
 catch (CosmoBaseException ex) when (ex.Data.Contains("BulkInsertResult"))
 {
-    var result = (BulkExecuteResult<Document>)ex.Data["BulkInsertResult"];
+    var result = (BulkExecuteResult<DocumentDao>)ex.Data["BulkInsertResult"]!;
     
     Console.WriteLine($"Success rate: {result.SuccessRate:F1}%");
     Console.WriteLine($"Total RUs consumed: {result.TotalRequestUnits}");
@@ -440,6 +443,40 @@ catch (CosmoBaseException ex) when (ex.Data.Contains("BulkInsertResult"))
         await repository.BulkInsertAsync(retryableItems, "partition");
     }
 }
+```
+
+### **DTO/DAO Mapping**
+
+CosmoBase uses a layered approach with automatic JSON-based mapping:
+
+```csharp
+// DTO - exposed to your application
+public class Product
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+    public decimal Price { get; set; }
+}
+
+// DAO - stored in Cosmos DB with audit fields
+public class ProductDao : ICosmosDataModel
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; }
+    public string Name { get; set; }
+    public decimal Price { get; set; }
+    
+    // Audit fields automatically managed
+    public DateTime? CreatedOnUtc { get; set; }
+    public DateTime? UpdatedOnUtc { get; set; }
+    public string? CreatedBy { get; set; }
+    public string? UpdatedBy { get; set; }
+    public bool Deleted { get; set; }
+}
+
+// Services handle mapping automatically
+var dataService = serviceProvider.GetService<ICosmosDataWriteService<Product, ProductDao>>();
+await dataService.CreateAsync(new Product { Id = "123", Name = "Widget" });
 ```
 
 ### **Observability & Metrics**
@@ -481,106 +518,14 @@ Built-in telemetry for monitoring and performance optimization:
 
 | Property                              | Description                                                            |
 | ------------------------------------- | ---------------------------------------------------------------------- |
-| `ModelName`                           | Identifier used in code/registration (must match your DTO type)        |
+| `ModelName`                           | Identifier used in code/registration (must match your DAO class name exactly) |
 | `DatabaseName`                        | Name of the Cosmos DB database                                         |
 | `CollectionName`                      | Name of the container/collection                                       |
-| `PartitionKey`                        | Partition key path (e.g. `/category`)                                  |
+| `PartitionKey`                        | Property name from your DAO class (e.g. `Category`, not `/category`)   |
 | `ReadCosmosClientConfigurationName`   | Name of the client to use for read operations                          |
 | `WriteCosmosClientConfigurationName`  | Name of the client to use for write operations                         |
 
 </details>
-
----
-
-## 🧪 Testing
-
-### **Unit Testing with Custom Configuration**
-
-```csharp
-[TestClass]
-public class CosmosTests
-{
-    private ServiceProvider _serviceProvider;
-    
-    [TestInitialize]
-    public void Setup()
-    {
-        var services = new ServiceCollection();
-        
-        // Configure for Cosmos DB emulator with test user context
-        services.AddCosmoBase(
-            new SystemUserContext("TestUser"),
-            options =>
-            {
-                options.CosmosClientConfigurations = new[]
-                {
-                    new CosmosClientConfiguration
-                    {
-                        Name = "Test",
-                        ConnectionString = "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
-                        NumberOfWorkers = 1,
-                        AllowBulkExecution = false,
-                        ConnectionMode = "Gateway"
-                    }
-                };
-                
-                options.CosmosModelConfigurations = new[]
-                {
-                    new CosmosModelConfiguration
-                    {
-                        ModelName = "Product",
-                        DatabaseName = "TestDb",
-                        CollectionName = "TestContainer",
-                        PartitionKey = "/category",
-                        ReadCosmosClientConfigurationName = "Test",
-                        WriteCosmosClientConfigurationName = "Test"
-                    }
-                };
-            });
-        
-        _serviceProvider = services.BuildServiceProvider();
-    }
-    
-    [TestMethod]
-    public async Task TestProductOperations()
-    {
-        var repository = _serviceProvider.GetRequiredService<ICosmosRepository<Product>>();
-        
-        // Test with validation and audit fields
-        var product = new Product { Id = "test", Category = "electronics" };
-        var result = await repository.CreateItemAsync(product);
-        
-        // Verify audit fields were set
-        Assert.IsNotNull(result.CreatedOnUtc);
-        Assert.IsNotNull(result.UpdatedOnUtc);
-        Assert.AreEqual("TestUser", result.CreatedBy);
-        Assert.AreEqual("TestUser", result.UpdatedBy);
-        Assert.IsFalse(result.Deleted);
-        
-        // Test cached count
-        var count = await repository.GetCountWithCacheAsync("electronics", 0);
-        Assert.AreEqual(1, count);
-    }
-}
-```
-
-### **Mocking for Unit Tests**
-
-```csharp
-[TestMethod]
-public async Task TestServiceWithMockedRepository()
-{
-    // Mock the repository
-    var mockRepo = new Mock<ICosmosRepository<Product>>();
-    mockRepo.Setup(r => r.GetCountWithCacheAsync("electronics", 15, default))
-           .ReturnsAsync(42);
-    
-    var service = new ProductService(mockRepo.Object);
-    var count = await service.GetProductCountAsync("electronics");
-    
-    Assert.AreEqual(42, count);
-}
-```
 
 ---
 
