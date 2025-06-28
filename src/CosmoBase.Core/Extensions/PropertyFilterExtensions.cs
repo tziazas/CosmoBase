@@ -24,10 +24,10 @@ public static class PropertyFilterExtensions
             var col = f.PropertyName.StartsWith("@") ? f.PropertyName.Substring(1) : f.PropertyName;
             switch (f.PropertyComparison)
             {
-                case PropertyComparison.Equals:
+                case PropertyComparison.Equal:
                     parts.Add($"c.{col} = {f.PropertyName}");
                     break;
-                case PropertyComparison.NotEquals:
+                case PropertyComparison.NotEqual:
                     parts.Add($"c.{col} <> {f.PropertyName}");
                     break;
                 case PropertyComparison.GreaterThan:

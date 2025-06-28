@@ -203,7 +203,7 @@ public class XunitLogger : ILogger
         _categoryName = categoryName;
     }
 
-    public IDisposable BeginScope<TState>(TState state) => new NoOpDisposable();
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new NoOpDisposable();
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
