@@ -53,12 +53,15 @@ public class AuditFieldManager<T> : IAuditFieldManager<T> where T : class, ICosm
         var now = DateTime.UtcNow;
         var currentUser = _userContext.GetCurrentUser();
 
-        // Determine if this is a create or update based on existing audit fields
-        var isCreate = !item.CreatedOnUtc.HasValue;
+        // For DTOs coming from API, CreatedOnUtc will be null
+        // Only consider it an "update" if CreatedOnUtc has a value AND it's not default
+        var isUpdate = item.CreatedOnUtc.HasValue && 
+                       item.CreatedOnUtc.Value != default(DateTime) &&
+                       item.CreatedOnUtc.Value != DateTime.MinValue;
 
-        if (isCreate)
+        if (!isUpdate)
         {
-            // This is a new document
+            // This is a new document (DTO from API)
             item.CreatedOnUtc = now;
             item.CreatedBy = currentUser;
             item.Deleted = false;

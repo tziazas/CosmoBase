@@ -12,6 +12,33 @@
 
 ---
 
+## 🔧 Troubleshooting
+
+### **Common Issues**
+
+**BadRequest (400) errors:**
+- ✅ Ensure `ModelName` matches your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`)
+- ✅ Ensure `PartitionKey` is the property name from your DAO class (e.g., `"Category"`, not `"/category"`)
+- ✅ Verify your DAO implements `ICosmosDataModel` with `[JsonPropertyName("id")]` on the Id property
+- ✅ Check that your container partition key path matches your DAO property (case-sensitive)
+
+**Audit field issues:**
+- ✅ Ensure your user context (`IUserContext`) is properly registered and returns valid user identifiers
+- ✅ For upsert operations, CosmoBase automatically manages audit fields based on document existence
+- ✅ DTOs don't need pre-populated audit fields - CosmoBase handles this automatically
+
+**Serialization issues:**
+- ✅ CosmoBase automatically configures System.Text.Json for proper JSON serialization
+- ✅ Use `[JsonPropertyName("id")]` on your DAO's Id property (required by Cosmos DB)
+- ✅ Avoid `PropertyNamingPolicy = JsonNamingPolicy.CamelCase` as it conflicts with partition key casing
+
+**Service registration issues:**
+- ✅ Ensure you're using the correct generic type parameters: `ICosmosDataWriteService<TDto, TDao>`
+- ✅ Verify your user context is registered before calling `AddCosmoBase()`
+- ✅ Check that your configuration section name matches (default: "CosmoBase")
+
+---
+
 ## 🏆 Features
 
 ### **Core Capabilities**
@@ -161,6 +188,9 @@ builder.Services.AddCosmoBase(
               .First(c => c.Name == "Primary")
               .NumberOfWorkers = 12;
     });
+
+> **⚠️ Important Configuration Note:**
+> CosmoBase automatically configures System.Text.Json serialization for proper `[JsonPropertyName]` attribute handling. This ensures your DAO's `[JsonPropertyName("id")]` attribute works correctly with Cosmos DB's lowercase "id" requirement.
 
 var app = builder.Build();
 ```
@@ -518,10 +548,10 @@ Built-in telemetry for monitoring and performance optimization:
 
 | Property                              | Description                                                            |
 | ------------------------------------- | ---------------------------------------------------------------------- |
-| `ModelName`                           | Identifier used in code/registration (must match your DAO class name exactly) |
+| `ModelName`                           | **CRITICAL:** Must match your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`) |
 | `DatabaseName`                        | Name of the Cosmos DB database                                         |
 | `CollectionName`                      | Name of the container/collection                                       |
-| `PartitionKey`                        | Property name from your DAO class (e.g. `Category`, not `/category`)   |
+| `PartitionKey`                        | **CRITICAL:** Must be the property name from your DAO class (e.g., `"Category"`, not `"/category"`) |
 | `ReadCosmosClientConfigurationName`   | Name of the client to use for read operations                          |
 | `WriteCosmosClientConfigurationName`  | Name of the client to use for write operations                         |
 

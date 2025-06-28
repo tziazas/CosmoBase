@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -144,7 +146,11 @@ public static class ServiceCollectionExtensions
                             // Use configuration values or defaults
                             MaxRetryAttemptsOnRateLimitedRequests = c.MaxRetryAttempts ?? 9,
                             MaxRetryWaitTimeOnRateLimitedRequests =
-                                TimeSpan.FromSeconds(c.MaxRetryWaitTimeInSeconds ?? 30)
+                                TimeSpan.FromSeconds(c.MaxRetryWaitTimeInSeconds ?? 30),
+                            UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions
+                            {
+                                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+                            }
                         })
                 );
         });

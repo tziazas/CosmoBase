@@ -86,7 +86,7 @@ public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDa
         }
 
         // 3. Validate audit fields for updates (not creates)
-        if (operation != "Create")
+        if (operation == "Replace" || operation == "Update")
         {
             if (!item.CreatedOnUtc.HasValue)
             {

@@ -91,16 +91,17 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
             if (_cosmosClient == null) return;
 
             // Create test database
+            var cfg = _serviceProvider!.GetRequiredService<IOptions<CosmosConfiguration>>().Value;
             var database = await _cosmosClient.CreateDatabaseIfNotExistsAsync("CosmoBaseTestDb");
 
-            // Create test containers
-            await database.Database.CreateContainerIfNotExistsAsync(
-                "Products",
-                "/Category");
-
-            await database.Database.CreateContainerIfNotExistsAsync(
-                "Orders",
-                "/CustomerId");
+            // Create containers based on model configurations
+            foreach (var modelConfig in cfg.CosmosModelConfigurations)
+            {
+                var partitionKeyPath = $"/{modelConfig.PartitionKey}";
+                await database.Database.CreateContainerIfNotExistsAsync(
+                    modelConfig.CollectionName,
+                    partitionKeyPath);
+            }
 
             var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
             logger?.LogInformation("Test database and containers created successfully");

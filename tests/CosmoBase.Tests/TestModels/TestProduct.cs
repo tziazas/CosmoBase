@@ -11,22 +11,14 @@ public class TestProduct
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
-    [Required]
-    [StringLength(100, MinimumLength = 1)]
     public string Name { get; set; } = string.Empty;
 
-    [JsonPropertyName("customerId")]
-    [Required]
     public string CustomerId { get; set; }
 
-    [Required]
-    [StringLength(50)]
     public string Category { get; set; } = string.Empty;
 
-    [Range(0.01, double.MaxValue, ErrorMessage = "Price must be greater than 0")]
     public decimal Price { get; set; }
 
-    [StringLength(500)]
     public string? Description { get; set; }
 
     public List<string> Tags { get; set; } = new();
@@ -37,7 +29,6 @@ public class TestProduct
 
     public DateTime? DiscontinuedDate { get; set; }
 
-    [Range(0, int.MaxValue)]
     public int StockQuantity { get; set; }
 
     public string? Sku { get; set; }
