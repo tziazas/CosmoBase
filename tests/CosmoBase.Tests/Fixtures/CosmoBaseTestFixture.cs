@@ -1,9 +1,12 @@
+using System.Collections.ObjectModel;
+using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Abstractions.Interfaces;
 using CosmoBase.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Options;
 using Xunit.Abstractions;
 
 namespace CosmoBase.Tests.Fixtures;
@@ -29,6 +32,7 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
             .AddJsonFile("Configuration/appsettings.json", optional: true, reloadOnChange: true)
             // Override with local settings (if you want to use your own CosmosDb in Azure, etc.)
             .AddJsonFile("localsettings.json", optional: true, reloadOnChange: true);
+
 
         _configuration = builder.Build();
     }
@@ -69,20 +73,12 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
 
         // Build service provider
         _serviceProvider = services.BuildServiceProvider();
+        var cfg = _serviceProvider.GetRequiredService<IOptions<CosmosConfiguration>>().Value;
+
+        var cosmosClients = _serviceProvider.GetRequiredService<IReadOnlyDictionary<string, CosmosClient>>();
 
         // Create direct Cosmos client for setup/cleanup
-        _cosmosClient = new CosmosClient(
-            "http://localhost:8081",
-            "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
-            new CosmosClientOptions
-            {
-                HttpClientFactory = () => new HttpClient(new HttpClientHandler()
-                {
-                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true
-                }),
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true
-            });
+        _cosmosClient = cosmosClients.Values.First();
 
         // Ensure test database exists
         await EnsureTestDatabaseAsync();
@@ -100,13 +96,11 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
             // Create test containers
             await database.Database.CreateContainerIfNotExistsAsync(
                 "Products",
-                "/Category",
-                throughput: 400);
+                "/Category");
 
             await database.Database.CreateContainerIfNotExistsAsync(
                 "Orders",
-                "/CustomerId",
-                throughput: 400);
+                "/CustomerId");
 
             var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
             logger?.LogInformation("Test database and containers created successfully");
