@@ -3,6 +3,7 @@ using CosmoBase.Tests.Fixtures;
 using CosmoBase.Tests.Helpers;
 using CosmoBase.Tests.TestModels;
 using FluentAssertions;
+using Microsoft.Azure.Cosmos;
 using Xunit.Abstractions;
 
 namespace CosmoBase.Tests.Integration.Services;
@@ -21,7 +22,53 @@ public class DataServicesIntegrationTests : IClassFixture<CosmoBaseTestFixture>
         _fixture = fixture;
         _output = output;
     }
+    
+    [Fact]
+    public async Task Test_Direct_Cosmos_SDK()
+    {
+        // Get the container directly, bypassing ALL CosmoBase logic
+        var cosmosClient = new CosmosClient(
+            "placeholder",
+            "placeholder",
+            new CosmosClientOptions
+            {
+                HttpClientFactory = () => new HttpClient(new HttpClientHandler()
+                {
+                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+                }),
+                ConnectionMode = ConnectionMode.Direct,
+                LimitToEndpoint = true
+            });
 
+        var container = cosmosClient.GetContainer("CosmoBaseTestDb", "Products");
+
+        // Create the most minimal document possible
+        var simpleDoc = new
+        {
+            id = "direct-test-123",
+            Category = "electronics", // partition key
+            Name = "Direct Test"
+        };
+
+        try
+        {
+            // Test direct Cosmos SDK call
+            var result = await container.CreateItemAsync(simpleDoc, new PartitionKey("electronics"));
+            _output.WriteLine($"✅ Direct Cosmos SDK works: {result.Resource.id}");
+        }
+        catch (Exception ex)
+        {
+            _output.WriteLine($"❌ Even direct Cosmos SDK failed: {ex.Message}");
+        
+            // If this fails, it's a platform/emulator issue, not your code
+            throw;
+        }
+        finally
+        {
+            cosmosClient.Dispose();
+        }
+    }
+    
     [Fact]
     public Task DataReadService_Should_Be_Registered_In_DI_Container()
     {
@@ -104,7 +151,7 @@ public class DataServicesIntegrationTests : IClassFixture<CosmoBaseTestFixture>
     {
         // Arrange
         var writeService = _fixture.GetRequiredService<ICosmosDataWriteService<TestProduct, TestProductDao>>();
-        var products = TestDataBuilder.CreateTestProducts(5, "electronics");
+        var products = SimpleTestDataBuilder.CreateSimpleTestProducts(10, "Meow"); //TestDataBuilder.CreateTestProducts(5, "electronics");
 
         // Act
         await writeService.BulkUpsertAsync(
@@ -129,7 +176,7 @@ public class DataServicesIntegrationTests : IClassFixture<CosmoBaseTestFixture>
         var writeService = _fixture.GetRequiredService<ICosmosDataWriteService<TestProduct, TestProductDao>>();
         var readService = _fixture.GetRequiredService<ICosmosDataReadService<TestProduct, TestProductDao>>();
         
-        var products = TestDataBuilder.CreateTestProducts(3, "books");
+        var products = SimpleTestDataBuilder.CreateSimpleTestProducts(10, "Books"); //TestDataBuilder.CreateTestProducts(5, "electronics");
         foreach (var product in products)
         {
             await writeService.CreateAsync(product);
@@ -157,7 +204,7 @@ public class DataServicesIntegrationTests : IClassFixture<CosmoBaseTestFixture>
         var writeService = _fixture.GetRequiredService<ICosmosDataWriteService<TestProduct, TestProductDao>>();
         var readService = _fixture.GetRequiredService<ICosmosDataReadService<TestProduct, TestProductDao>>();
         
-        var products = TestDataBuilder.CreateTestProducts(8, "pagination");
+        var products = SimpleTestDataBuilder.CreateSimpleTestProducts(10, "pagination"); //TestDataBuilder.CreateTestProducts(5, "electronics");
         foreach (var product in products)
         {
             await writeService.CreateAsync(product);
@@ -186,7 +233,7 @@ public class DataServicesIntegrationTests : IClassFixture<CosmoBaseTestFixture>
 
         _output.WriteLine($"Pagination: First page {firstPage.Count} items, Second page {secondPage.Count} items");
     }
-
+    
     [Fact]
     public async Task GetCountAsync_Should_Return_Correct_Count()
     {

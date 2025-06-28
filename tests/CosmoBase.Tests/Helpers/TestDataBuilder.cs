@@ -1,55 +1,71 @@
+// ============================================================================
+// Fix 1: Update TestDataBuilder to ensure UTF-8 safe data generation
+// ============================================================================
+
 using Bogus;
 using CosmoBase.Tests.TestModels;
+using System.Text;
 
 namespace CosmoBase.Tests.Helpers;
 
 /// <summary>
-/// Builder for generating realistic test data using Bogus
+/// Builder for generating realistic test data using Bogus with UTF-8 safety
 /// </summary>
 public static class TestDataBuilder
 {
-    private static readonly Faker Faker = new("en");
+    /// <summary>
+    /// Ensures a string is UTF-8 safe by removing invalid characters
+    /// </summary>
+    private static string EnsureUtf8Safe(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        
+        // Convert to bytes and back to remove invalid UTF-8 sequences
+        var bytes = Encoding.UTF8.GetBytes(input);
+        return Encoding.UTF8.GetString(bytes);
+    }
 
     /// <summary>
-    /// Creates a single test product with realistic data
+    /// Creates a single test product with UTF-8 safe realistic data
     /// </summary>
     public static TestProduct CreateTestProduct(string? category = null, string? id = null)
     {
         return new Faker<TestProduct>()
             .RuleFor(p => p.Id, f => id ?? f.Random.Guid().ToString())
-            .RuleFor(p => p.Name, f => f.Commerce.ProductName())
+            .RuleFor(p => p.Name, f => EnsureUtf8Safe(f.Commerce.ProductName()))
             .RuleFor(p => p.Category, f => category ?? f.PickRandom("electronics", "books", "clothing", "home", "sports"))
-            .RuleFor(p => p.Price, f => f.Random.Decimal(1, 10000))
-            .RuleFor(p => p.Description, f => f.Commerce.ProductDescription())
-            .RuleFor(p => p.Tags, f => f.Make(3, () => f.Commerce.Categories(1)[0]))
+            .RuleFor(p => p.CustomerId, f => f.Random.Guid().ToString()) // Fixed: was missing this assignment
+            .RuleFor(p => p.Price, f => Math.Round(f.Random.Decimal(1, 10000), 2))
+            .RuleFor(p => p.Description, f => EnsureUtf8Safe(f.Commerce.ProductDescription()))
+            .RuleFor(p => p.Tags, f => f.Make(3, () => EnsureUtf8Safe(f.Commerce.Categories(1)[0])))
             .RuleFor(p => p.IsActive, f => f.Random.Bool(0.8f))
             .RuleFor(p => p.StockQuantity, f => f.Random.Int(0, 1000))
-            .RuleFor(p => p.Sku, f => f.Commerce.Ean13())
-            .RuleFor(p => p.Barcode, f => f.Commerce.Ean8())
-            .RuleFor(p => p.Metadata, f => CreateProductMetadata())
-            .RuleFor(p => p.Dimensions, f => CreateProductDimensions())
+            .RuleFor(p => p.Sku, f => f.Random.AlphaNumeric(12)) // Use alphanumeric instead of EAN13
+            .RuleFor(p => p.Barcode, f => f.Random.AlphaNumeric(8)) // Use alphanumeric instead of EAN8
+            .RuleFor(p => p.Metadata, _ => CreateProductMetadata())
+            .RuleFor(p => p.Dimensions, _ => CreateProductDimensions())
             .RuleFor(p => p.DiscontinuedDate, f => f.Random.Bool(0.1f) ? f.Date.Past() : null)
-            .RuleFor(p => p.Category, f => f.Commerce.Color())
+            // Remove the duplicate Category rule that was overriding with Color
             .Generate();
     }
 
     /// <summary>
-    /// Creates product metadata with realistic data
+    /// Creates product metadata with UTF-8 safe realistic data
     /// </summary>
     public static ProductMetadata CreateProductMetadata()
     {
         return new Faker<ProductMetadata>()
-            .RuleFor(m => m.Brand, f => f.Company.CompanyName())
+            .RuleFor(m => m.Brand, f => EnsureUtf8Safe(f.Company.CompanyName()))
             .RuleFor(m => m.Model, f => f.Random.AlphaNumeric(8))
-            .RuleFor(m => m.Color, f => f.Commerce.Color())
+            .RuleFor(m => m.Color, f => EnsureUtf8Safe(f.Commerce.Color()))
             .RuleFor(m => m.Size, f => f.PickRandom("XS", "S", "M", "L", "XL", "XXL"))
-            .RuleFor(m => m.Weight, f => f.Random.Double(0.1, 50))
+            .RuleFor(m => m.Weight, f => Math.Round(f.Random.Double(0.1, 50), 2))
             .RuleFor(m => m.Material, f => f.PickRandom("Cotton", "Polyester", "Metal", "Plastic", "Wood", "Glass"))
-            .RuleFor(m => m.Origin, f => f.Address.Country())
+            .RuleFor(m => m.Origin, f => EnsureUtf8Safe(f.Address.Country()))
             .RuleFor(m => m.CustomAttributes, f => new Dictionary<string, object>
             {
                 ["warranty"] = f.Random.Int(1, 36) + " months",
-                ["rating"] = f.Random.Double(1, 5),
+                ["rating"] = Math.Round(f.Random.Double(1, 5), 1),
                 ["reviews"] = f.Random.Int(0, 1000)
             })
             .Generate();
@@ -61,15 +77,15 @@ public static class TestDataBuilder
     public static ProductDimensions CreateProductDimensions()
     {
         return new Faker<ProductDimensions>()
-            .RuleFor(d => d.Length, f => f.Random.Double(1, 100))
-            .RuleFor(d => d.Width, f => f.Random.Double(1, 100))
-            .RuleFor(d => d.Height, f => f.Random.Double(1, 100))
+            .RuleFor(d => d.Length, f => Math.Round(f.Random.Double(1, 100), 2))
+            .RuleFor(d => d.Width, f => Math.Round(f.Random.Double(1, 100), 2))
+            .RuleFor(d => d.Height, f => Math.Round(f.Random.Double(1, 100), 2))
             .RuleFor(d => d.Unit, f => f.PickRandom("cm", "in", "mm"))
             .Generate();
     }
 
     /// <summary>
-    /// Creates a single test order with realistic data
+    /// Creates a single test order with UTF-8 safe realistic data
     /// </summary>
     public static TestOrder CreateTestOrder(string? customerId = null, string? id = null)
     {
@@ -79,70 +95,70 @@ public static class TestDataBuilder
             .RuleFor(o => o.OrderNumber, f => f.Random.AlphaNumeric(10).ToUpper())
             .RuleFor(o => o.OrderDate, f => f.Date.Recent(30))
             .RuleFor(o => o.Status, f => f.PickRandom<OrderStatus>())
-            .RuleFor(o => o.TotalAmount, f => f.Random.Decimal(10, 5000))
-            .RuleFor(o => o.ShippingCost, f => f.Random.Decimal(0, 50))
-            .RuleFor(o => o.TaxAmount, f => f.Random.Decimal(1, 500))
-            .RuleFor(o => o.DiscountAmount, f => f.Random.Decimal(0, 100))
-            .RuleFor(o => o.Items, f => f.Make(f.Random.Int(1, 5), () => CreateOrderItem()))
-            .RuleFor(o => o.ShippingAddress, f => CreateShippingAddress())
-            .RuleFor(o => o.BillingAddress, f => CreateBillingAddress())
-            .RuleFor(o => o.PaymentInfo, f => CreatePaymentInfo())
-            .RuleFor(o => o.Notes, f => f.Random.Bool(0.3f) ? f.Lorem.Sentence() : null)
+            .RuleFor(o => o.TotalAmount, f => Math.Round(f.Random.Decimal(10, 5000), 2))
+            .RuleFor(o => o.ShippingCost, f => Math.Round(f.Random.Decimal(0, 50), 2))
+            .RuleFor(o => o.TaxAmount, f => Math.Round(f.Random.Decimal(1, 500), 2))
+            .RuleFor(o => o.DiscountAmount, f => Math.Round(f.Random.Decimal(0, 100), 2))
+            .RuleFor(o => o.Items, f => f.Make(f.Random.Int(1, 5), CreateOrderItem))
+            .RuleFor(o => o.ShippingAddress, _ => CreateShippingAddress())
+            .RuleFor(o => o.BillingAddress, _ => CreateBillingAddress())
+            .RuleFor(o => o.PaymentInfo, _ => CreatePaymentInfo())
+            .RuleFor(o => o.Notes, f => f.Random.Bool(0.3f) ? EnsureUtf8Safe(f.Lorem.Sentence()) : null)
             .RuleFor(o => o.TrackingNumber, f => f.Random.Bool(0.5f) ? f.Random.AlphaNumeric(12) : null)
             .Generate();
     }
 
     /// <summary>
-    /// Creates an order item with realistic data
+    /// Creates an order item with UTF-8 safe realistic data
     /// </summary>
     public static OrderItem CreateOrderItem()
     {
         return new Faker<OrderItem>()
             .RuleFor(i => i.ProductId, f => f.Random.Guid().ToString())
-            .RuleFor(i => i.ProductName, f => f.Commerce.ProductName())
-            .RuleFor(i => i.Sku, f => f.Commerce.Ean13())
+            .RuleFor(i => i.ProductName, f => EnsureUtf8Safe(f.Commerce.ProductName()))
+            .RuleFor(i => i.Sku, f => f.Random.AlphaNumeric(13))
             .RuleFor(i => i.Quantity, f => f.Random.Int(1, 10))
-            .RuleFor(i => i.UnitPrice, f => f.Random.Decimal(1, 1000))
+            .RuleFor(i => i.UnitPrice, f => Math.Round(f.Random.Decimal(1, 1000), 2))
             .RuleFor(i => i.Attributes, f => new Dictionary<string, object>
             {
-                ["color"] = f.Commerce.Color(),
+                ["color"] = EnsureUtf8Safe(f.Commerce.Color()),
                 ["size"] = f.PickRandom("S", "M", "L", "XL")
             })
             .Generate();
     }
 
     /// <summary>
-    /// Creates a shipping address with realistic data
+    /// Creates a shipping address with UTF-8 safe realistic data
     /// </summary>
     public static ShippingAddress CreateShippingAddress()
     {
         return new Faker<ShippingAddress>()
-            .RuleFor(a => a.Name, f => f.Name.FullName())
-            .RuleFor(a => a.AddressLine1, f => f.Address.StreetAddress())
-            .RuleFor(a => a.AddressLine2, f => f.Random.Bool(0.3f) ? f.Address.SecondaryAddress() : null)
-            .RuleFor(a => a.City, f => f.Address.City())
-            .RuleFor(a => a.State, f => f.Address.State())
-            .RuleFor(a => a.PostalCode, f => f.Address.ZipCode())
-            .RuleFor(a => a.Country, f => f.Address.Country())
-            .RuleFor(a => a.Phone, f => f.Phone.PhoneNumber())
+            .RuleFor(a => a.Name, f => EnsureUtf8Safe(f.Name.FullName()))
+            .RuleFor(a => a.AddressLine1, f => EnsureUtf8Safe(f.Address.StreetAddress()))
+            .RuleFor(a => a.AddressLine2, f => f.Random.Bool(0.3f) ? EnsureUtf8Safe(f.Address.SecondaryAddress()) : null)
+            .RuleFor(a => a.City, f => EnsureUtf8Safe(f.Address.City()))
+            .RuleFor(a => a.State, f => EnsureUtf8Safe(f.Address.State()))
+            .RuleFor(a => a.PostalCode, f => f.Random.Replace("#####"))
+            .RuleFor(a => a.Country, _ => "United States") // Use simple ASCII country name
+            .RuleFor(a => a.Phone, f => f.Random.Replace("###-###-####"))
             .Generate();
     }
 
     /// <summary>
-    /// Creates a billing address with realistic data
+    /// Creates a billing address with UTF-8 safe realistic data
     /// </summary>
     public static BillingAddress CreateBillingAddress()
     {
         return new Faker<BillingAddress>()
-            .RuleFor(a => a.Name, f => f.Name.FullName())
-            .RuleFor(a => a.AddressLine1, f => f.Address.StreetAddress())
-            .RuleFor(a => a.AddressLine2, f => f.Random.Bool(0.3f) ? f.Address.SecondaryAddress() : null)
-            .RuleFor(a => a.City, f => f.Address.City())
-            .RuleFor(a => a.State, f => f.Address.State())
-            .RuleFor(a => a.PostalCode, f => f.Address.ZipCode())
-            .RuleFor(a => a.Country, f => f.Address.Country())
-            .RuleFor(a => a.Phone, f => f.Phone.PhoneNumber())
-            .RuleFor(a => a.Company, f => f.Random.Bool(0.4f) ? f.Company.CompanyName() : null)
+            .RuleFor(a => a.Name, f => EnsureUtf8Safe(f.Name.FullName()))
+            .RuleFor(a => a.AddressLine1, f => EnsureUtf8Safe(f.Address.StreetAddress()))
+            .RuleFor(a => a.AddressLine2, f => f.Random.Bool(0.3f) ? EnsureUtf8Safe(f.Address.SecondaryAddress()) : null)
+            .RuleFor(a => a.City, f => EnsureUtf8Safe(f.Address.City()))
+            .RuleFor(a => a.State, f => EnsureUtf8Safe(f.Address.State()))
+            .RuleFor(a => a.PostalCode, f => f.Random.Replace("#####"))
+            .RuleFor(a => a.Country, _ => "United States") // Use simple ASCII country name
+            .RuleFor(a => a.Phone, f => f.Random.Replace("###-###-####"))
+            .RuleFor(a => a.Company, f => f.Random.Bool(0.4f) ? EnsureUtf8Safe(f.Company.CompanyName()) : null)
             .Generate();
     }
 
@@ -160,9 +176,7 @@ public static class TestDataBuilder
             .Generate();
     }
 
-    /// <summary>
-    /// Creates multiple test products
-    /// </summary>
+    // Rest of the methods remain the same...
     public static List<TestProduct> CreateTestProducts(int count, string? category = null)
     {
         return Enumerable.Range(0, count)
@@ -170,9 +184,6 @@ public static class TestDataBuilder
             .ToList();
     }
 
-    /// <summary>
-    /// Creates multiple test orders
-    /// </summary>
     public static List<TestOrder> CreateTestOrders(int count, string? customerId = null)
     {
         return Enumerable.Range(0, count)
@@ -180,9 +191,6 @@ public static class TestDataBuilder
             .ToList();
     }
 
-    /// <summary>
-    /// Creates a product with specific validation issues for testing
-    /// </summary>
     public static TestProduct CreateInvalidProduct()
     {
         return new TestProduct
@@ -194,48 +202,39 @@ public static class TestDataBuilder
         };
     }
 
-    /// <summary>
-    /// Creates an order with specific validation issues for testing
-    /// </summary>
     public static TestOrder CreateInvalidOrder()
     {
         return new TestOrder
         {
             // Missing required CustomerId and OrderNumber
             TotalAmount = -100, // Invalid amount
-            Items = new List<OrderItem>
-            {
+            Items =
+            [
                 new OrderItem
                 {
                     // Missing required fields
                     Quantity = 0, // Invalid quantity
                     UnitPrice = -50 // Invalid price
                 }
-            }
+            ]
         };
     }
 
-    /// <summary>
-    /// Creates test data with specific categories for testing partitioning
-    /// </summary>
     public static class Categories
     {
-        public static readonly string[] Electronics = { "electronics" };
-        public static readonly string[] Books = { "books" };
-        public static readonly string[] Clothing = { "clothing" };
-        public static readonly string[] Home = { "home" };
-        public static readonly string[] Sports = { "sports" };
-        public static readonly string[] All = { "electronics", "books", "clothing", "home", "sports" };
+        public static readonly string[] Electronics = ["electronics"];
+        public static readonly string[] Books = ["books"];
+        public static readonly string[] Clothing = ["clothing"];
+        public static readonly string[] Home = ["home"];
+        public static readonly string[] Sports = ["sports"];
+        public static readonly string[] All = ["electronics", "books", "clothing", "home", "sports"];
     }
 
-    /// <summary>
-    /// Creates test data with specific customer IDs for testing partitioning
-    /// </summary>
     public static class CustomerIds
     {
         public static readonly string Customer1 = "customer-1";
         public static readonly string Customer2 = "customer-2";
         public static readonly string Customer3 = "customer-3";
-        public static readonly string[] All = { Customer1, Customer2, Customer3 };
+        public static readonly string[] All = [Customer1, Customer2, Customer3];
     }
 }

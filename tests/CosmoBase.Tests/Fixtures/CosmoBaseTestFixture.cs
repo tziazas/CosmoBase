@@ -16,17 +16,39 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
     private ServiceProvider? _serviceProvider;
     private readonly IConfiguration _configuration;
     private CosmosClient? _cosmosClient;
-    
-    public IServiceProvider ServiceProvider => _serviceProvider ?? 
-        throw new InvalidOperationException("ServiceProvider not initialized. Call InitializeAsync first.");
+
+    public IServiceProvider ServiceProvider => _serviceProvider ??
+                                               throw new InvalidOperationException(
+                                                   "ServiceProvider not initialized. Call InitializeAsync first.");
 
     public CosmoBaseTestFixture()
     {
         var builder = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("Configuration/appsettings.json", optional: false, reloadOnChange: true);
+            // Use app settings
+            .AddJsonFile("Configuration/appsettings.json", optional: true, reloadOnChange: true)
+            // Override with local settings (if you want to use your own CosmosDb in Azure, etc.)
+            .AddJsonFile("localsettings.json", optional: true, reloadOnChange: true);
 
         _configuration = builder.Build();
+    }
+
+    public async Task DisposeAsync()
+    {
+        if (_serviceProvider != null)
+        {
+            await CleanupTestDataAsync();
+            await _serviceProvider.DisposeAsync();
+        }
+
+        _cosmosClient?.Dispose();
+    }
+
+    public void Dispose()
+    {
+        _serviceProvider?.Dispose();
+        _cosmosClient?.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     public async Task InitializeAsync()
@@ -34,17 +56,14 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
         var services = new ServiceCollection();
 
         // Add logging with console output
-        services.AddLogging(builder =>
-        {
-            builder.AddConsole();
-        });
+        services.AddLogging(builder => { builder.AddConsole(); });
 
         // Add configuration
         services.AddSingleton(_configuration);
 
         // Create test user context
         var testUserContext = new TestUserContext("TestUser");
-        
+
         // Add CosmoBase with test configuration
         services.AddCosmoBase(_configuration, testUserContext);
 
@@ -69,24 +88,6 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
         await EnsureTestDatabaseAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        if (_serviceProvider != null)
-        {
-            await CleanupTestDataAsync();
-            await _serviceProvider.DisposeAsync();
-        }
-        
-        _cosmosClient?.Dispose();
-    }
-
-    public void Dispose()
-    {
-        _serviceProvider?.Dispose();
-        _cosmosClient?.Dispose();
-        GC.SuppressFinalize(this);
-    }
-
     private async Task EnsureTestDatabaseAsync()
     {
         try
@@ -95,16 +96,16 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
 
             // Create test database
             var database = await _cosmosClient.CreateDatabaseIfNotExistsAsync("CosmoBaseTestDb");
-            
+
             // Create test containers
             await database.Database.CreateContainerIfNotExistsAsync(
-                "Products", 
-                "/category",
+                "Products",
+                "/Category",
                 throughput: 400);
-                
+
             await database.Database.CreateContainerIfNotExistsAsync(
-                "Orders", 
-                "/customerId",
+                "Orders",
+                "/CustomerId",
                 throughput: 400);
 
             var logger = _serviceProvider?.GetService<ILogger<CosmoBaseTestFixture>>();
@@ -161,16 +162,9 @@ public class CosmoBaseTestFixture : IAsyncLifetime, IDisposable
 /// <summary>
 /// Test user context for audit field testing
 /// </summary>
-public class TestUserContext : IUserContext
+public class TestUserContext(string userId) : IUserContext
 {
-    private readonly string _userId;
-
-    public TestUserContext(string userId)
-    {
-        _userId = userId;
-    }
-
-    public string? GetCurrentUser() => _userId;
+    public string? GetCurrentUser() => userId;
 }
 
 /// <summary>
@@ -190,7 +184,9 @@ public class XunitLoggerProvider : ILoggerProvider
         return new XunitLogger(_testOutputHelper, categoryName);
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+    }
 }
 
 /// <summary>
@@ -211,13 +207,14 @@ public class XunitLogger : ILogger
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter)
     {
         try
         {
             var message = formatter(state, exception);
             _testOutputHelper.WriteLine($"[{logLevel}] {_categoryName}: {message}");
-            
+
             if (exception != null)
             {
                 _testOutputHelper.WriteLine($"Exception: {exception}");
@@ -231,6 +228,8 @@ public class XunitLogger : ILogger
 
     private class NoOpDisposable : IDisposable
     {
-        public void Dispose() { }
+        public void Dispose()
+        {
+        }
     }
 }

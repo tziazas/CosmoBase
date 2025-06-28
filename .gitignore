@@ -407,3 +407,9 @@ FodyWeavers.xsd
 
 # IntelliJ IDEA
 /.idea/
+
+# Ignore local settings files (contains secrets, connection strings, etc.)
+**/localsettings.json
+
+# Ignore Azure Functions local settings
+**/local.settings.json
