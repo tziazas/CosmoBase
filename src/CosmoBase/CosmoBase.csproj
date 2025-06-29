@@ -1,0 +1,66 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <!-- Package Identity (Directory.Build.props handles common properties) -->
+        <PackageId>CosmoBase</PackageId>
+        <Title>CosmoBase</Title>
+        <Description>Complete Azure Cosmos DB library with enterprise features for .NET 9 including repository pattern, caching, bulk operations, validation, and comprehensive audit trails</Description>
+        <PackageTags>cosmosdb;azure;nosql;database;repository;orm;caching;bulk-operations;audit;validation;dataservices;dependencyinjection;net9</PackageTags>
+
+        <!-- Meta-package specific settings -->
+        <Summary>All-in-one Cosmos DB toolkit - install this package to get the complete CosmoBase experience</Summary>
+        
+        <PackageReleaseNotes>
+            Complete CosmoBase package including:
+            - CosmoBase.Abstractions: Core interfaces and models
+            - CosmoBase.Core: Repository pattern with caching and validation
+            - CosmoBase.DataServices: High-level data services with DTO mapping
+            - CosmoBase.DependencyInjection: Easy service registration
+
+            Install this single package to get everything you need for Azure Cosmos DB development.
+        </PackageReleaseNotes>
+
+        <!-- This is a meta-package - no assemblies, just dependencies -->
+        <IncludeBuildOutput>true</IncludeBuildOutput>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
+
+        <!-- Don't generate package on every build for meta-package -->
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    </PropertyGroup>
+
+    <!-- GitVersion Configuration - USE .NET 9.0 VERSION -->
+<!--    <PropertyGroup>-->
+<!--        <GitVersion_LocateGitDir>true</GitVersion_LocateGitDir>-->
+<!--        &lt;!&ndash; Use .NET 9.0 version since it's available in GitVersion 6.3.0 &ndash;&gt;-->
+<!--        <GitVersionTaskAssembly Condition="'$(MSBuildRuntimeType)' == 'Core'">$(NuGetPackageRoot)gitversion.msbuild/6.3.0/tools/net9.0/GitVersion.MsBuild.dll</GitVersionTaskAssembly>-->
+<!--        &lt;!&ndash; Disable GitVersion during design-time builds to improve IDE performance &ndash;&gt;-->
+<!--        <GitVersion_NoFallback Condition="'$(DesignTimeBuild)' == 'true'">true</GitVersion_NoFallback>-->
+<!--        &lt;!&ndash; Additional GitVersion settings &ndash;&gt;-->
+<!--        <GitVersion_UpdateAssemblyInfo>true</GitVersion_UpdateAssemblyInfo>-->
+<!--        <GitVersion_UpdateAssemblyInfoFilename>false</GitVersion_UpdateAssemblyInfoFilename>-->
+<!--    </PropertyGroup>-->
+
+    <!-- GitVersion Package Reference (version managed by Directory.Packages.props) -->
+<!--    <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">-->
+<!--        <PackageReference Include="GitVersion.MsBuild">-->
+<!--            <PrivateAssets>all</PrivateAssets>-->
+<!--            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>-->
+<!--        </PackageReference>-->
+<!--    </ItemGroup>-->
+
+    <!-- Project References - ALL sub-packages -->
+    <ItemGroup>
+        <ProjectReference Include="..\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
+        <ProjectReference Include="..\CosmoBase.Core\CosmoBase.Core.csproj" />
+        <ProjectReference Include="..\CosmoBase.DataServices\CosmoBase.DataServices.csproj" />
+        <ProjectReference Include="..\CosmoBase.DependencyInjection\CosmoBase.DependencyInjection.csproj" />
+    </ItemGroup>
+
+    <!-- Meta-package should not have its own source files -->
+    <ItemGroup>
+        <Compile Remove="**/*.cs" />
+        <None Include="**/*.cs" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <!-- Package Identity (Directory.Build.props handles common properties) -->
+        <PackageId>CosmoBase.Abstractions</PackageId>
+        <Title>CosmoBase Abstractions</Title>
+        <Description>Core interfaces, models, and abstractions for CosmoBase Azure Cosmos DB library (.NET 9). Pure abstractions with no dependencies - perfect for library authors and dependency inversion.</Description>
+        <PackageTags>cosmosdb;abstractions;interfaces;models;enums;specifications;net9</PackageTags>
+
+        <!-- Package-specific metadata -->
+        <Summary>Foundational abstractions for CosmoBase - interfaces, models, enums, and specifications</Summary>
+        <PackageReleaseNotes>
+            Core abstractions including:
+            - Repository and service interfaces (ICosmosRepository, ICosmosDataService)
+            - Data model contracts (ICosmosDataModel, IUserContext)
+            - Configuration models (CosmosConfiguration, CosmoBaseOptions)
+            - Query specifications and filters
+            - Enums and constants
+            - Exception types
+
+            Zero dependencies - safe for library authors to reference.
+        </PackageReleaseNotes>
+
+        <!-- This is a pure abstractions package -->
+        <PackageType>Dependency</PackageType>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <!-- No project or package references - pure abstractions! -->
+    <!-- This is the foundation package that others build upon -->
+
+</Project>

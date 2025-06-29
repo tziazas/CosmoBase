@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <!-- Disable GitVersion for test projects -->
+    <EnableGitVersionTask>false</EnableGitVersionTask>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="AutoFixture" />
+    <PackageReference Include="AutoFixture.Xunit2" />
+    <PackageReference Include="Bogus" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="Testcontainers.CosmosDb" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CosmoBase.Abstractions\CosmoBase.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\CosmoBase.Core\CosmoBase.Core.csproj" />
+    <ProjectReference Include="..\..\src\CosmoBase.DataServices\CosmoBase.DataServices.csproj" />
+    <ProjectReference Include="..\..\src\CosmoBase.DependencyInjection\CosmoBase.DependencyInjection.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Configuration\appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="localsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Integration\Repository\" />
+    <Folder Include="Unit\Repository\" />
+    <Folder Include="Unit\Services\" />
+    <Folder Include="Unit\Validators\" />
+  </ItemGroup>
+
+</Project>
