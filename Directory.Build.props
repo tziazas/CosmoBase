@@ -19,7 +19,6 @@
         <RepositoryType>git</RepositoryType>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
-        <PackageIcon>cosmobase.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
@@ -40,11 +39,6 @@
     <!-- Common Package Files -->
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
-    </ItemGroup>
-
-    <!-- Icon file -->
-    <ItemGroup>
-        <None Include="$(MSBuildThisFileDirectory)docs/images/cosmobase.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)docs/images/cosmobase.png')" />
     </ItemGroup>
 
 </Project>
