@@ -4,7 +4,7 @@
         <!-- Package Identity (Directory.Build.props handles common properties) -->
         <PackageId>CosmoBase</PackageId>
         <Title>CosmoBase</Title>
-        <PackageIcon>cosmobase-logo.png</PackageIcon>
+<!--        <PackageIcon>cosmobase-logo.png</PackageIcon>-->
         <!-- Force the icon to be included even for meta-packages -->
         <IncludeContentInPack>true</IncludeContentInPack>
         <Description>Complete Azure Cosmos DB library with enterprise features for .NET 9 including repository pattern, caching, bulk operations, validation, and comprehensive audit trails</Description>
@@ -32,10 +32,10 @@
         <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     </PropertyGroup>
 
-    <ItemGroup>
-        <None Include="../../docs/images/cosmobase-logo.png" Pack="true" PackagePath="\" />
-        <Content Include="../../docs/images/cosmobase-logo.png" Pack="true" PackagePath="\" />
-    </ItemGroup>
+<!--    <ItemGroup>-->
+<!--        <None Include="../../docs/images/cosmobase-logo.png" Pack="true" PackagePath="\" />-->
+<!--        <Content Include="../../docs/images/cosmobase-logo.png" Pack="true" PackagePath="\" />-->
+<!--    </ItemGroup>-->
 
     <!-- GitVersion Configuration - USE .NET 9.0 VERSION -->
 <!--    <PropertyGroup>-->
