@@ -26,6 +26,7 @@ jobs:
         with:
           versionSpec: '5.x'
 
+      # 4. Restore & build the project
       - name: Run GitVersion
         id: gitversion
         uses: GitTools/actions/gitversion/execute@v0.9.13
@@ -33,21 +34,30 @@ jobs:
           useConfigFile: true
           configFilePath: GitVersion.yml
 
-      # 4. Restore & build your project
       - name: Restore & Build
         run: |
+          dotnet restore src/CosmoBase.Abstractions/CosmoBase.Abstractions.csproj
+          dotnet restore src/CosmoBase.Core/CosmoBase.Core.csproj
+          dotnet restore src/CosmoBase.DataServices/CosmoBase.DataServices.csproj
+          dotnet restore src/CosmoBase.DependencyInjection/CosmoBase.DependencyInjection.csproj
           dotnet restore src/CosmoBase/CosmoBase.csproj
+          dotnet build src/CosmoBase.Abstractions/CosmoBase.Abstractions.csproj --configuration Release
+          dotnet build src/CosmoBase.Core/CosmoBase.Core.csproj --configuration Release
+          dotnet build src/CosmoBase.DataServices/CosmoBase.DataServices.csproj --configuration Release
+          dotnet build src/CosmoBase.DependencyInjection/CosmoBase.DependencyInjection.csproj --configuration Release
           dotnet build src/CosmoBase/CosmoBase.csproj --configuration Release
-
-      # 5. Pack, injecting the GitVersion-computed NuGetVersion
+          
+      # Pack all projects
       - name: Pack
         run: |
-          dotnet pack src/CosmoBase/CosmoBase.csproj \
-            --configuration Release \
-            --no-build \
-            /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
-
-      # 6. Push only when this run was triggered by a tag (v*.*.*)
+          dotnet pack src/CosmoBase.Abstractions/CosmoBase.Abstractions.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
+          dotnet pack src/CosmoBase.Core/CosmoBase.Core.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
+          dotnet pack src/CosmoBase.DataServices/CosmoBase.DataServices.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
+          dotnet pack src/CosmoBase.DependencyInjection/CosmoBase.DependencyInjection.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
+          dotnet pack src/CosmoBase/CosmoBase.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
+        
+        
+        # 6. Push only when this run was triggered by a tag (v*.*.*)
       - name: Push to NuGet.org
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
