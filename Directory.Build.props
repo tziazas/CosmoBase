@@ -40,7 +40,11 @@
     <!-- Common Package Files -->
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
-        <None Include="$(MSBuildThisFileDirectory)docs/images/cosmobase.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)docs/images/cosmobase.png')" />
+    </ItemGroup>
+    
+    <!-- Icon file -->
+    <ItemGroup>
+        <None Include="../../docs/images/cosmobase.png" Pack="true" PackagePath="\" />
     </ItemGroup>
 
 </Project>
