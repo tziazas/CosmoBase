@@ -1,11 +1,11 @@
-<p align="center">
+
   <img src="docs/images/cosmobase.png" alt="CosmoBase Logo" width="300">
-</p>
+
 
 # CosmoBase
 
 [![Build Status](https://github.com/tziazas/CosmoBase/actions/workflows/publish.yml/badge.svg)](https://github.com/tziazas/CosmoBase/actions)
-[![NuGet](https://img.shields.io/nuget/v/CosmoBase.CosmosDb.svg)](https://www.nuget.org/packages/CosmoBase)
+[![NuGet](https://img.shields.io/nuget/v/CosmoBase.svg)](https://www.nuget.org/packages/CosmoBase)
 [![License](https://img.shields.io/github/license/tziazas/CosmoBase.svg)](LICENSE)
 
 **CosmoBase** – Enterprise-grade Azure Cosmos DB library with advanced caching, validation, bulk operations, intelligent soft-delete handling, and comprehensive audit field management.
