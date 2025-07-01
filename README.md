@@ -12,30 +12,44 @@
 
 ---
 
-## 🔧 Troubleshooting
+## 🤔 Why CosmoBase?
 
-### **Common Issues**
+**Stop reinventing the Cosmos DB wheel.** Every project ends up building the same patterns: audit fields, validation, bulk operations, caching, retry logic. Then you copy-paste between projects, and half your implementations fall behind while the other half get new features.
 
-**BadRequest (400) errors:**
-- ✅ Ensure `ModelName` matches your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`)
-- ✅ Ensure `PartitionKey` is the property name from your DAO class (e.g., `"Category"`, not `"/category"`)
-- ✅ Verify your DAO implements `ICosmosDataModel` with `[JsonPropertyName("id")]` on the Id property
-- ✅ Check that your container partition key path matches your DAO property (case-sensitive)
+**CosmoBase centralizes all the boilerplate** so you can focus on your business logic instead of low-level infrastructure concerns. One library, battle-tested patterns, automatic updates for all your projects.
 
-**Audit field issues:**
-- ✅ Ensure your user context (`IUserContext`) is properly registered and returns valid user identifiers
-- ✅ For upsert operations, CosmoBase automatically manages audit fields based on document existence
-- ✅ DTOs don't need pre-populated audit fields - CosmoBase handles this automatically
+**Raw Cosmos SDK:**
+```csharp
+// Manual audit fields, custom retry logic, bulk operation error handling...
+var response = await container.CreateItemAsync(item);
+item.CreatedOnUtc = DateTime.UtcNow;
+item.CreatedBy = GetCurrentUser(); // Hope this works
+// 50+ lines of boilerplate per operation
+```
 
-**Serialization issues:**
-- ✅ CosmoBase automatically configures System.Text.Json for proper JSON serialization
-- ✅ Use `[JsonPropertyName("id")]` on your DAO's Id property (required by Cosmos DB)
-- ✅ Avoid `PropertyNamingPolicy = JsonNamingPolicy.CamelCase` as it conflicts with partition key casing
+**With CosmoBase:**
+```csharp
+// Audit fields, retries, validation, bulk operations - all handled
+await _writer.CreateAsync(product);
+```
 
-**Service registration issues:**
-- ✅ Ensure you're using the correct generic type parameters: `ICosmosDataWriteService<TDto, TDao>`
-- ✅ Verify your user context is registered before calling `AddCosmoBase()`
-- ✅ Check that your configuration section name matches (default: "CosmoBase")
+**Enterprise-ready from day one** with features you'll eventually need: soft deletes, multi-region routing, comprehensive caching, and bulletproof bulk operations.
+
+---
+
+# 📖 Table of Contents
+
+- [Why CosmoBase?](#why-cosmobase)
+- [Features](#features)
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+- [Advanced Features](#advanced-features)
+- [Configuration Reference](#configuration-reference)
+- [Troubleshooting](#troubleshooting)
+- [Performance Best Practices](#performance-best-practices)
+- [Migration & Versioning](#migration--versioning)
+- [License](#license)
+- [Contributing](#contributing)
 
 ---
 
@@ -559,6 +573,33 @@ Built-in telemetry for monitoring and performance optimization:
 
 ---
 
+## 🔧 Troubleshooting
+
+### **Common Issues**
+
+**BadRequest (400) errors:**
+- ✅ Ensure `ModelName` matches your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`)
+- ✅ Ensure `PartitionKey` is the property name from your DAO class (e.g., `"Category"`, not `"/category"`)
+- ✅ Verify your DAO implements `ICosmosDataModel` with `[JsonPropertyName("id")]` on the Id property
+- ✅ Check that your container partition key path matches your DAO property (case-sensitive)
+
+**Audit field issues:**
+- ✅ Ensure your user context (`IUserContext`) is properly registered and returns valid user identifiers
+- ✅ For upsert operations, CosmoBase automatically manages audit fields based on document existence
+- ✅ DTOs don't need pre-populated audit fields - CosmoBase handles this automatically
+
+**Serialization issues:**
+- ✅ CosmoBase automatically configures System.Text.Json for proper JSON serialization
+- ✅ Use `[JsonPropertyName("id")]` on your DAO's Id property (required by Cosmos DB)
+- ✅ Avoid `PropertyNamingPolicy = JsonNamingPolicy.CamelCase` as it conflicts with partition key casing
+
+**Service registration issues:**
+- ✅ Ensure you're using the correct generic type parameters: `ICosmosDataWriteService<TDto, TDao>`
+- ✅ Verify your user context is registered before calling `AddCosmoBase()`
+- ✅ Check that your configuration section name matches (default: "CosmoBase")
+
+---
+
 ## 🚀 Performance Best Practices
 
 ### **Audit Field Management**
@@ -588,41 +629,26 @@ Built-in telemetry for monitoring and performance optimization:
 
 ---
 
-## 📊 Migration Guide
+## 🔄 Migration & Versioning
 
-### **From Version 1.x to 2.x**
+### **Breaking Changes Policy**
 
-**Breaking Change: Required User Context**
+CosmoBase follows semantic versioning. Breaking changes will be clearly documented and migration guides provided for major version updates.
 
-Version 2.0 introduces comprehensive audit field management, which requires specifying a user context:
+### **Current Version: 0.1.3**
 
-```csharp
-// Before (v1.x)
-services.AddCosmoBase(configuration);
+No breaking changes have been introduced since the initial 0.1.0 release. All updates have been focused on:
+- Package publishing improvements
+- Documentation enhancements
+- Developer experience refinements
 
-// After (v2.x) - Background service
-services.AddCosmoBaseWithSystemUser(configuration, "MyService");
+### **Future Migration Support**
 
-// After (v2.x) - Web application
-services.AddCosmoBase(configuration, new WebUserContext(httpContextAccessor));
-
-// After (v2.x) - Custom logic
-services.AddCosmoBaseWithUserProvider(configuration, () => GetCurrentUser());
-```
-
-**Other Changes:**
-
-```csharp
-// Enhanced count operations with caching
-var count = await repository.GetCountWithCacheAsync("partition", 15);
-
-// Consistent soft-delete parameters
-var items = await repository.GetAllByArrayPropertyAsync("tags", "type", "premium", includeDeleted: false);
-
-// Automatic audit field management
-var product = await repository.CreateItemAsync(item);
-// CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically populated
-```
+When breaking changes are necessary (major version bumps), this section will provide:
+- Step-by-step migration instructions
+- Before/after code examples
+- Automated migration tooling where possible
+- Timeline for deprecated feature support
 
 ---
 
@@ -652,6 +678,6 @@ Contributions, issues, and feature requests are welcome! Please open an issue or
 
 ---
 
-<p align="center">
+<p style="text-align: center;">
   Made with ❤️ and 🚀 by Achilleas Tziazas
 </p>
