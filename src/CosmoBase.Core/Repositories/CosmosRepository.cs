@@ -1246,18 +1246,4 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         return result;
     }
-
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            // Dispose managed resources
-            _readClient.Dispose();
-            _writeClient.Dispose();
-
-            _disposed = true;
-        }
-
-        GC.SuppressFinalize(this);
-    }
 }
