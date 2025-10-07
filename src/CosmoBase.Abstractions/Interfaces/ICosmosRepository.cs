@@ -25,7 +25,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// 
 /// All write operations include comprehensive validation, retry policies, and telemetry.
 /// </remarks>
-public interface ICosmosRepository<T> : IDisposable
+public interface ICosmosRepository<T>
     where T : class, ICosmosDataModel
 {
     /// <summary>
