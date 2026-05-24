@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Net;
 using System.Runtime.CompilerServices;
 using CosmoBase.Abstractions.Configuration;
@@ -33,6 +34,21 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     private readonly ICosmosValidator<T> _validator;
     private readonly IAuditFieldManager<T> _auditFieldManager;
     private bool _disposed;
+
+    // Compiled delegate that reads the partition-key property from a T instance.
+    //
+    // Why a compiled expression instead of typeof(T).GetProperty(...).GetValue(...)?
+    // GetProperty() does a dictionary lookup in the type's metadata on every call.
+    // GetValue() boxes the result and dispatches through the reflection invoke path.
+    // Both costs add up when CreateAsync / ReplaceAsync / UpsertAsync are called at
+    // high throughput.
+    //
+    // Expression.Lambda<Func<T, string>>(...).Compile() emits a real CLR method once
+    // at construction time.  Every subsequent call is a direct property read — the same
+    // cost as writing `item.Category` in source code — with no reflection overhead at
+    // all.  The delegate is stored in a readonly field so it is thread-safe by
+    // construction and shared across all calls on this repository instance.
+    private readonly Func<T, string> _getPartitionKey;
 
     /// <summary>
     /// Initializes a new instance using <paramref name="configuration"/> to locate containers and <paramref name="cosmosClients"/> for database access.
@@ -87,6 +103,11 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
         _writeContainer = _writeClient
             .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+
+        // Build the compiled partition-key accessor now that _partitionKeyProperty is known.
+        // Fail fast here (constructor) rather than on the first write so misconfigured
+        // model names surface at startup rather than at runtime.
+        _getPartitionKey = BuildPartitionKeyAccessor(_partitionKeyProperty);
     }
 
     /// <inheritdoc/>
@@ -889,17 +910,43 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <summary>
-    /// Reads the value of the partition-key property (by name) from the given item.
+    /// Returns the partition-key value for <paramref name="item"/> using the pre-compiled
+    /// delegate.  Call cost is identical to a direct property access.
     /// </summary>
     private string GetPartitionKeyValue(T item)
     {
-        var prop = typeof(T).GetProperty(_partitionKeyProperty)
-                   ?? throw new InvalidOperationException(
-                       $"Partition-key property '{_partitionKeyProperty}' not found on type '{typeof(T).Name}'");
-        var raw = prop.GetValue(item)
-                  ?? throw new InvalidOperationException(
-                      $"Partition-key value for '{_partitionKeyProperty}' on '{typeof(T).Name}' was null");
-        return raw.ToString()!;
+        var value = _getPartitionKey(item);
+        if (value is null)
+            throw new InvalidOperationException(
+                $"Partition-key value for '{_partitionKeyProperty}' on '{typeof(T).Name}' was null");
+        return value;
+    }
+
+    /// <summary>
+    /// Builds a compiled <see cref="Func{T, String}"/> that reads the named property from
+    /// an instance of <typeparamref name="T"/> without reflection overhead at call time.
+    /// </summary>
+    /// <remarks>
+    /// The expression tree produced is equivalent to: <c>item => item.{propertyName}.ToString()</c>
+    ///
+    /// Step-by-step:
+    ///   1. <c>Expression.Parameter</c> declares the lambda's input parameter ("item").
+    ///   2. <c>Expression.Property</c> emits a member-access node for the named property.
+    ///      This validates that the property exists on T and throws here (construction time)
+    ///      rather than on the first write if the configuration is wrong.
+    ///   3. <c>Expression.Call</c> wraps the property access in a ToString() call so
+    ///      the lambda always returns string regardless of the underlying property type
+    ///      (string, Guid, int, etc.).
+    ///   4. <c>Expression.Lambda&lt;TDelegate&gt;</c> packages nodes 1–3 into a typed lambda.
+    ///   5. <c>.Compile()</c> JIT-compiles the expression tree into a real CLR delegate.
+    ///      This is the only expensive step and happens exactly once per repository instance.
+    /// </remarks>
+    private static Func<T, string> BuildPartitionKeyAccessor(string propertyName)
+    {
+        var param    = Expression.Parameter(typeof(T), "item");
+        var property = Expression.Property(param, propertyName); // throws ArgumentException if not found
+        var toString = Expression.Call(property, nameof(object.ToString), Type.EmptyTypes);
+        return Expression.Lambda<Func<T, string>>(toString, param).Compile();
     }
 
     /// <summary>

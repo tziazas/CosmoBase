@@ -12,6 +12,7 @@
 | 2026-05-24 | #3 — Polly registered but never used | Removed `TryAddSingleton` Polly registration and `using Polly;` from `ServiceCollectionExtensions.cs`. Removed `<PackageReference Include="Polly" />` from `CosmoBase.Core.csproj` and stale release note entry. 10 DI registration unit tests added at `tests/CosmoBase.Tests/Unit/DependencyInjection/ServiceRegistrationTests.cs`. |
 | 2026-05-24 | #4 — CI pipeline had no test step | Restructured `.github/workflows/publish.yml` into two jobs: `test` (unit + integration, uploads `.trx` results) and `publish` (`needs: test`). Replaced verbose per-project restore/build with `dotnet build CosmoBase.sln`. |
 | 2026-05-24 | #5 — `NotImplementedException` from explicit interface implementations | Removed `IDataWriteService<TDto, string>` and `IDataReadService<TDto, string>` from the inheritance chains of `ICosmosDataWriteService` and `ICosmosDataReadService`. Removed the three explicit throwing implementations (`IDataWriteService.CreateAsync`, `IDataWriteService.DeleteAsync`, `IDataReadService.GetByIdAsync`). Removed `new` modifier from `CreateAsync`, `UpsertAsync`, `GetAllAsync`, and `QueryAsync` in the Cosmos interfaces. Removed `IDataReadService<,>` and `IDataWriteService<,>` open-generic DI registrations from `ServiceCollectionExtensions.cs`. |
+| 2026-05-24 | #6 — Reflection on every write (not cached) | Replaced `typeof(T).GetProperty(_partitionKeyProperty).GetValue(item)` in `GetPartitionKeyValue` with a compiled `Func<T, string>` delegate (`_getPartitionKey`) built once in the constructor via `Expression.Lambda<Func<T,string>>(...).Compile()`. Added `BuildPartitionKeyAccessor` static helper with step-by-step XML doc explaining the expression tree. Property existence is now validated at construction time rather than on the first write. |
 
 ---
 
@@ -92,7 +93,7 @@ Supporting separate read and write clients per model type is a real production n
 
 ---
 
-### 6. Reflection on every write operation
+### ~~6. Reflection on every write operation~~ ✅ Fixed
 **File:** `src/CosmoBase.Core/Repositories/CosmosRepository.cs:894`
 
 `GetPartitionKeyValue` is called on every `CreateItemAsync`, `ReplaceItemAsync`, and `UpsertItemAsync`:
@@ -219,7 +220,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 3 | Polly registered but never used | Misleading | ✅ Fixed |
 | 4 | CI pipeline has no `dotnet test` step | Reliability | ✅ Fixed |
 | 5 | Dead Newtonsoft.Json dependency | Cleanliness | ⬜ Open |
-| 6 | Reflection on every write (not cached) | Performance | ⬜ Open |
+| 6 | Reflection on every write (not cached) | Performance | ✅ Fixed |
 | 7 | `NotImplementedException` explicit interface implementations | Design | ✅ Fixed |
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |
 | 9 | `_disposed` dead code | Dead code | ⬜ Open |
