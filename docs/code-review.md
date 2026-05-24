@@ -17,6 +17,7 @@
 | 2026-05-24 | #8 — `_disposed` dead code | Deleted the `private bool _disposed` field from `CosmosRepository<T>`. The repository does not own its `CosmosClient` instances (they are shared singletons injected via DI) and `Container` is not `IDisposable`, so there are no resources to release and implementing `IDisposable` would be incorrect. |
 | 2026-05-24 | #10 — Manual cache expiry duplicates `IMemoryCache` | Removed `CachedCountEntry` wrapper class and the manual `DateTime.UtcNow - cachedEntry.CachedAt` age check from `GetCountWithCacheAsync`. The cache now stores `int` directly. `GetFreshCountAsync` receives `cacheExpiryMinutes` and sets `AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(cacheExpiryMinutes)` so `IMemoryCache` owns the TTL. The `cacheExpiryMinutes == 0` bypass now correctly calls `GetCountAsync` directly without touching the cache. Deleted `CachedCountEntry.cs` from `CosmoBase.Abstractions`. |
 | 2026-05-24 | #11 — Debug tests in integration test suite | Deleted all 20 `Debug_*` test methods from `DataServicesIntegrationTests.cs`. All were written to diagnose a partition-key reflection bug that is now fixed; none had assertions. The real integration tests (14 `[Fact]`/`[Theory]` methods starting at the bottom of the file) already cover every code path those debug tests were probing. Also removed the 6 `using` directives that existed solely to support the debug tests (`System.Reflection`, `Microsoft.Azure.Cosmos`, `Microsoft.Extensions.Configuration`, `Microsoft.Extensions.Options`, `CosmoBase.Abstractions.Configuration`, and the `IConfiguration` Castle alias). |
+| 2026-05-24 | #12 — Soft delete has no optimistic concurrency | Rewrote `SoftDeleteAsync` to call `_readContainer.ReadItemAsync<T>` directly instead of `GetItemAsync`, capturing the `ItemResponse<T>` and its `ETag`. The subsequent `ReplaceItemAsync` now passes `new ItemRequestOptions { IfMatchEtag = readResponse.ETag }`, causing Cosmos to return HTTP 412 PreconditionFailed if the document was modified between the read and the write rather than silently overwriting concurrent changes. NotFound on read returns early (nothing to delete). |
 | 2026-05-24 | #9 — `new()` constraint not on interface | Removed `new()` from `CosmosRepository<T>`, `ICosmosValidator<in T>`, and `CosmosValidator<T>`. The constraint was never used in any of their bodies and was absent from `ICosmosRepository<T>` and `IAuditFieldManager<T>`, silently narrowing which types could use the concrete implementations. |
 
 ---
@@ -169,7 +170,7 @@ Two parallel expiry systems are running. Setting `AbsoluteExpirationRelativeToNo
 
 ---
 
-### 12. Soft delete has no optimistic concurrency
+### ~~12. Soft delete has no optimistic concurrency~~ ✅ Fixed
 **File:** `src/CosmoBase.Core/Repositories/CosmosRepository.cs:254`
 
 `SoftDeleteAsync` is a read-then-write:
@@ -230,7 +231,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ✅ Fixed |
 | 9 | `_disposed` dead code | Dead code | ✅ Fixed |
 | 10 | `new()` constraint not on interface | Design | ✅ Fixed |
-| 11 | Soft delete — no ETag/optimistic concurrency | Correctness | ⬜ Open |
+| 11 | Soft delete — no ETag/optimistic concurrency | Correctness | ✅ Fixed |
 | 12 | Regex count query conversion fragile | Correctness | ⬜ Open |
 | 13 | Debug tests in test suite | Quality | ✅ Fixed |
 | 14 | `GetAllAsync(limit, offset, count)` naming | Clarity | ⬜ Open |

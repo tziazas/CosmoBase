@@ -272,14 +272,47 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
     private async Task SoftDeleteAsync(string id, string partitionKey, CancellationToken cancellationToken)
     {
-        var item = await GetItemAsync(id, partitionKey, true, cancellationToken);
+        _validator.ValidateIdAndPartitionKey(id, partitionKey, "SoftDelete");
+
+        // Read directly via the SDK so we capture the ETag from the response.
+        // GetItemAsync returns only T?, discarding the ItemResponse — we need the
+        // ETag to guard the subsequent replace against concurrent writes.
+        ItemResponse<T> readResponse;
+        try
+        {
+            readResponse = await _readContainer.ReadItemAsync<T>(
+                id,
+                new PartitionKey(partitionKey),
+                cancellationToken: cancellationToken);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return; // Document does not exist — nothing to soft-delete.
+        }
+
+        _logger.LogInformation(
+            "SoftDeleteAsync read: Item {Id} consumed {RequestCharge} RUs.",
+            id, readResponse.RequestCharge);
+
+        var item = readResponse.Resource;
         if (item is null) return;
 
-        // Set the deleted flag and update audit fields
         item.Deleted = true;
         _auditFieldManager.SetUpdateAuditFields(item);
 
-        await ReplaceItemAsync(item, cancellationToken);
+        // IfMatchEtag causes Cosmos to return 412 PreconditionFailed if the document
+        // was modified between the read above and this write, preventing a silent
+        // overwrite of concurrent changes.
+        var writeResponse = await _writeContainer.ReplaceItemAsync(
+            item,
+            id,
+            new PartitionKey(partitionKey),
+            new ItemRequestOptions { IfMatchEtag = readResponse.ETag },
+            cancellationToken);
+
+        _logger.LogInformation(
+            "SoftDeleteAsync replace: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            id, writeResponse.RequestCharge, writeResponse.Diagnostics);
     }
 
     /// <inheritdoc/>
