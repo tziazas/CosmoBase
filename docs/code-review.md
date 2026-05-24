@@ -15,6 +15,7 @@
 | 2026-05-24 | #6 — Reflection on every write (not cached) | Replaced `typeof(T).GetProperty(_partitionKeyProperty).GetValue(item)` in `GetPartitionKeyValue` with a compiled `Func<T, string>` delegate (`_getPartitionKey`) built once in the constructor via `Expression.Lambda<Func<T,string>>(...).Compile()`. Added `BuildPartitionKeyAccessor` static helper with step-by-step XML doc explaining the expression tree. Property existence is now validated at construction time rather than on the first write. |
 | 2026-05-24 | #7 — Dead Newtonsoft.Json dependency | Removed `<PackageReference Include="Newtonsoft.Json" />` and the redundant commented-out duplicate from `CosmoBase.Core.csproj`. Removed `using Newtonsoft.Json;` from `CosmosRepository.cs` and `CosmosDataWriteService.cs`. Added `<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>` to the root `Directory.Build.props` (with explanation) so the Cosmos SDK v3 build guard does not require Newtonsoft across any project in the solution. |
 | 2026-05-24 | #8 — `_disposed` dead code | Deleted the `private bool _disposed` field from `CosmosRepository<T>`. The repository does not own its `CosmosClient` instances (they are shared singletons injected via DI) and `Container` is not `IDisposable`, so there are no resources to release and implementing `IDisposable` would be incorrect. |
+| 2026-05-24 | #10 — Manual cache expiry duplicates `IMemoryCache` | Removed `CachedCountEntry` wrapper class and the manual `DateTime.UtcNow - cachedEntry.CachedAt` age check from `GetCountWithCacheAsync`. The cache now stores `int` directly. `GetFreshCountAsync` receives `cacheExpiryMinutes` and sets `AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(cacheExpiryMinutes)` so `IMemoryCache` owns the TTL. The `cacheExpiryMinutes == 0` bypass now correctly calls `GetCountAsync` directly without touching the cache. Deleted `CachedCountEntry.cs` from `CosmoBase.Abstractions`. |
 | 2026-05-24 | #9 — `new()` constraint not on interface | Removed `new()` from `CosmosRepository<T>`, `ICosmosValidator<in T>`, and `CosmosValidator<T>`. The constraint was never used in any of their bodies and was absent from `ICosmosRepository<T>` and `IAuditFieldManager<T>`, silently narrowing which types could use the concrete implementations. |
 
 ---
@@ -151,7 +152,7 @@ The `new()` constraint is not required by the interface and does not appear to b
 
 ---
 
-### 10. Manual cache expiry duplicates what `IMemoryCache` already does
+### ~~10. Manual cache expiry duplicates what `IMemoryCache` already does~~ ✅ Fixed
 **File:** `src/CosmoBase.Core/Repositories/CosmosRepository.cs:479–516`
 
 `GetFreshCountAsync` stores a `CachedCountEntry` with a `CachedAt` timestamp. `GetCountWithCacheAsync` then manually computes the age and compares it against `cacheExpiryMinutes`. Simultaneously, the underlying cache entry is set with `AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24)`.
@@ -225,7 +226,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 5 | Dead Newtonsoft.Json dependency | Cleanliness | ✅ Fixed |
 | 6 | Reflection on every write (not cached) | Performance | ✅ Fixed |
 | 7 | `NotImplementedException` explicit interface implementations | Design | ✅ Fixed |
-| 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |
+| 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ✅ Fixed |
 | 9 | `_disposed` dead code | Dead code | ✅ Fixed |
 | 10 | `new()` constraint not on interface | Design | ✅ Fixed |
 | 11 | Soft delete — no ETag/optimistic concurrency | Correctness | ⬜ Open |

@@ -445,91 +445,65 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         // Generate unique cache key for this model type + partition
         var cacheKey = $"count_{typeof(T).Name}_{partitionKey}";
 
-        // If cache expiry is 0, always bypass cache
+        // cacheExpiryMinutes == 0 means "always bypass" — skip the cache entirely.
         if (cacheExpiryMinutes == 0)
         {
             _logger.LogDebug("Cache bypass requested for count query on partition {PartitionKey}", partitionKey);
-            return await GetFreshCountAsync(partitionKey, cacheKey, cancellationToken);
+            return await GetCountAsync(partitionKey, cancellationToken);
         }
 
-        // Check if we have cached data
-        if (_cache.TryGetValue(cacheKey, out CachedCountEntry? cachedEntry) && cachedEntry != null)
+        // IMemoryCache owns the TTL — if the key is present the entry has not yet expired.
+        // No manual age arithmetic needed.
+        if (_cache.TryGetValue(cacheKey, out int cachedCount))
         {
-            var age = DateTime.UtcNow - cachedEntry.CachedAt;
-            var expiryThreshold = TimeSpan.FromMinutes(cacheExpiryMinutes);
-
-            if (age <= expiryThreshold)
-            {
-                _logger.LogDebug(
-                    "Returning cached count {Count} for partition {PartitionKey} (age: {Age:mm\\:ss})",
-                    cachedEntry.Count,
-                    partitionKey,
-                    age
-                );
-
-                // Record cache hit metric
-                CosmosRepositoryMetrics.CacheHitCount.Add(1,
-                    new KeyValuePair<string, object?>("model", typeof(T).Name),
-                    new KeyValuePair<string, object?>("operation", "GetCountCache")
-                );
-
-                return cachedEntry.Count;
-            }
-
             _logger.LogDebug(
-                "Cached count for partition {PartitionKey} expired (age: {Age:mm\\:ss} > threshold: {Threshold:mm\\:ss})",
-                partitionKey,
-                age,
-                expiryThreshold
+                "Returning cached count {Count} for partition {PartitionKey}",
+                cachedCount,
+                partitionKey
             );
-        }
-        else
-        {
-            _logger.LogDebug("No cached count found for partition {PartitionKey}", partitionKey);
+
+            CosmosRepositoryMetrics.CacheHitCount.Add(1,
+                new KeyValuePair<string, object?>("model", typeof(T).Name),
+                new KeyValuePair<string, object?>("operation", "GetCountCache")
+            );
+
+            return cachedCount;
         }
 
-        // Cache miss or expired - get fresh count
-        return await GetFreshCountAsync(partitionKey, cacheKey, cancellationToken);
+        _logger.LogDebug("No cached count found for partition {PartitionKey}", partitionKey);
+
+        return await GetFreshCountAsync(partitionKey, cacheKey, cacheExpiryMinutes, cancellationToken);
     }
 
     /// <summary>
-    /// Performs a fresh COUNT query and updates the cache with the result.
+    /// Performs a fresh COUNT query, stores the result in the cache with the caller-supplied
+    /// TTL, and returns the count.
     /// </summary>
     private async Task<int> GetFreshCountAsync(string partitionKey, string cacheKey,
-        CancellationToken cancellationToken)
+        int cacheExpiryMinutes, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Executing fresh count query for partition {PartitionKey}", partitionKey);
 
-        // Record cache miss metric
         CosmosRepositoryMetrics.CacheMissCount.Add(1,
             new KeyValuePair<string, object?>("model", typeof(T).Name),
             new KeyValuePair<string, object?>("operation", "GetCountCache")
         );
 
-        // Get fresh count using existing method
         var count = await GetCountAsync(partitionKey, cancellationToken);
 
-        // Cache the result with absolute expiration (we'll check age manually)
-        var cacheEntry = new CachedCountEntry
+        // Let IMemoryCache own the expiry — no wrapper class or manual age-check needed.
+        _cache.Set(cacheKey, count, new MemoryCacheEntryOptions
         {
-            Count = count,
-            CachedAt = DateTime.UtcNow
-        };
-
-        // Set cache with generous absolute expiration (we handle expiry manually)
-        var cacheOptions = new MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24), // Generous fallback
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(cacheExpiryMinutes),
             Priority = CacheItemPriority.Normal,
-            Size = 1 // Simple size for cache pressure management
-        };
-
-        _cache.Set(cacheKey, cacheEntry, cacheOptions);
+            Size = 1
+        });
 
         _logger.LogInformation(
-            "Cached fresh count {Count} for partition {PartitionKey}",
+            "Cached fresh count {Count} for partition {PartitionKey} (TTL: {Minutes} min)",
             count,
-            partitionKey
+            partitionKey,
+            cacheExpiryMinutes
         );
 
         return count;
