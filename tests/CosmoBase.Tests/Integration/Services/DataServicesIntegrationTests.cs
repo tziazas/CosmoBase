@@ -164,7 +164,7 @@ public class DataServicesIntegrationTests(
 
         // Act - Get all results first to see what's actually there
         var allProducts = new List<TestProduct>();
-        await foreach (var product in readService.GetAllAsync(limit: 100, offset: 0, count: 100))
+        await foreach (var product in readService.GetAllAsync(pageSize: 100, offset: 0, maxItems: 100))
         {
             allProducts.Add(product);
         }
@@ -174,13 +174,13 @@ public class DataServicesIntegrationTests(
 
         // Now test pagination
         var firstPage = new List<TestProduct>();
-        await foreach (var product in readService.GetAllAsync(limit: 3, offset: 0, count: 3))
+        await foreach (var product in readService.GetAllAsync(pageSize: 3, offset: 0, maxItems: 3))
         {
             firstPage.Add(product);
         }
 
         var secondPage = new List<TestProduct>();
-        await foreach (var product in readService.GetAllAsync(limit: 3, offset: 3, count: 3))
+        await foreach (var product in readService.GetAllAsync(pageSize: 3, offset: 3, maxItems: 3))
         {
             secondPage.Add(product);
         }

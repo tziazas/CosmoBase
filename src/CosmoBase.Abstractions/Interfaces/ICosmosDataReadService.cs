@@ -101,14 +101,18 @@ public interface ICosmosDataReadService<TDto, TDao>
     IAsyncEnumerable<TDto> GetAllAsync(string partitionKey, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Streams a subset of documents using offset and limit semantics for pagination scenarios.
+    /// Streams a subset of documents using SQL-level offset/limit pagination with an optional
+    /// in-process item cap.
     /// </summary>
-    /// <param name="limit">Maximum number of items to request per server-side page from Cosmos DB.</param>
-    /// <param name="offset">Number of items to skip before beginning to return results.</param>
-    /// <param name="count">Total maximum number of items to yield from the stream.</param>
+    /// <param name="pageSize">
+    /// Number of items fetched per SDK round-trip (<c>LIMIT</c> in the Cosmos SQL query).
+    /// Controls RU and network granularity, not the total items returned.
+    /// </param>
+    /// <param name="offset">Number of items to skip before streaming begins (<c>OFFSET</c> in SQL).</param>
+    /// <param name="maxItems">Maximum total number of items to yield from the stream across all pages.</param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
-    /// <returns>An async stream of documents after applying offset/limit/count constraints.</returns>
-    IAsyncEnumerable<TDto> GetAllAsync(int limit, int offset, int count,
+    /// <returns>An async stream of at most <paramref name="maxItems"/> documents.</returns>
+    IAsyncEnumerable<TDto> GetAllAsync(int pageSize, int offset, int maxItems,
         CancellationToken cancellationToken = default);
 
     /// <summary>

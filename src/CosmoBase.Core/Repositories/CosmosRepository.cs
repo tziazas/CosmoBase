@@ -335,16 +335,18 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<T> GetAllAsync(int limit, int offset, int count,
+    public IAsyncEnumerable<T> GetAllAsync(int pageSize, int offset, int maxItems,
         CancellationToken cancellationToken = default)
     {
-        var sql = $"SELECT * FROM c WHERE c.Deleted = false OFFSET @offset LIMIT @limit";
+        var sql = $"SELECT * FROM c WHERE c.Deleted = false OFFSET @offset LIMIT @pageSize";
         var def = new QueryDefinition(sql)
             .WithParameter("@offset", offset)
-            .WithParameter("@limit", limit);
+            .WithParameter("@pageSize", pageSize);
         return ExecuteIterator(
             _readContainer.GetItemQueryIterator<T>(def,
-                requestOptions: new QueryRequestOptions { MaxItemCount = limit }), cancellationToken, count);
+                requestOptions: new QueryRequestOptions { MaxItemCount = pageSize }),
+            cancellationToken,
+            maxItems);
     }
 
     private async IAsyncEnumerable<T> ExecuteIterator(
