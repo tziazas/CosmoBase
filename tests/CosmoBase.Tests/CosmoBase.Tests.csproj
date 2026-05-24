@@ -36,14 +36,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Configuration\appsettings.json">
+    <!-- Required: base test configuration (emulator settings, model configs, logging) -->
+    <Content Include="Configuration\appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="localsettings.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <!-- Optional: gitignored local override for testing against a real Cosmos endpoint -->
+    <None Update="localsettings.json" Condition="Exists('localsettings.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
