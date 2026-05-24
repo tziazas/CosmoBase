@@ -36,13 +36,8 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
         <PackageReference Include="Microsoft.Extensions.Options" />
         <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
-        <PackageReference Include="Newtonsoft.Json" />
-
         <!-- JSON Serialization (if needed for specific Cosmos scenarios) -->
         <PackageReference Include="System.Text.Json" />
-
-        <!-- Remove Newtonsoft.Json unless specifically needed -->
-        <!-- <PackageReference Include="Newtonsoft.Json" /> -->
     </ItemGroup>
 
     <!-- Remove empty Filters folder reference -->

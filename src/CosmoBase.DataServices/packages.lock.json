@@ -716,7 +716,6 @@
           "Microsoft.Extensions.Logging.Abstractions": "[9.0.6, )",
           "Microsoft.Extensions.Options": "[9.0.6, )",
           "Microsoft.Extensions.Options.DataAnnotations": "[9.0.6, )",
-          "Newtonsoft.Json": "[13.0.3, )",
           "System.Text.Json": "[9.0.0, )"
         }
       },
@@ -807,12 +806,6 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "9.0.6",
           "Microsoft.Extensions.Options": "9.0.6"
         }
-      },
-      "Newtonsoft.Json": {
-        "type": "CentralTransitive",
-        "requested": "[13.0.3, )",
-        "resolved": "13.0.3",
-        "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
       },
       "System.Text.Json": {
         "type": "CentralTransitive",

@@ -23,6 +23,15 @@
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
 
+    <!-- Cosmos SDK compatibility -->
+    <PropertyGroup>
+        <!-- The Cosmos SDK v3 build target requires Newtonsoft.Json to be explicitly referenced
+             unless this flag is set. CosmoBase uses the System.Text.Json serializer exclusively
+             (configured via UseSystemTextJsonSerializerWithOptions), so we opt out of the check
+             to keep Newtonsoft out of the dependency graph entirely. -->
+        <AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>
+    </PropertyGroup>
+
     <!-- Build Settings -->
     <PropertyGroup>
         <TreatWarningsAsErrors>false</TreatWarningsAsErrors>

@@ -13,6 +13,7 @@
 | 2026-05-24 | #4 — CI pipeline had no test step | Restructured `.github/workflows/publish.yml` into two jobs: `test` (unit + integration, uploads `.trx` results) and `publish` (`needs: test`). Replaced verbose per-project restore/build with `dotnet build CosmoBase.sln`. |
 | 2026-05-24 | #5 — `NotImplementedException` from explicit interface implementations | Removed `IDataWriteService<TDto, string>` and `IDataReadService<TDto, string>` from the inheritance chains of `ICosmosDataWriteService` and `ICosmosDataReadService`. Removed the three explicit throwing implementations (`IDataWriteService.CreateAsync`, `IDataWriteService.DeleteAsync`, `IDataReadService.GetByIdAsync`). Removed `new` modifier from `CreateAsync`, `UpsertAsync`, `GetAllAsync`, and `QueryAsync` in the Cosmos interfaces. Removed `IDataReadService<,>` and `IDataWriteService<,>` open-generic DI registrations from `ServiceCollectionExtensions.cs`. |
 | 2026-05-24 | #6 — Reflection on every write (not cached) | Replaced `typeof(T).GetProperty(_partitionKeyProperty).GetValue(item)` in `GetPartitionKeyValue` with a compiled `Func<T, string>` delegate (`_getPartitionKey`) built once in the constructor via `Expression.Lambda<Func<T,string>>(...).Compile()`. Added `BuildPartitionKeyAccessor` static helper with step-by-step XML doc explaining the expression tree. Property existence is now validated at construction time rather than on the first write. |
+| 2026-05-24 | #7 — Dead Newtonsoft.Json dependency | Removed `<PackageReference Include="Newtonsoft.Json" />` and the redundant commented-out duplicate from `CosmoBase.Core.csproj`. Removed `using Newtonsoft.Json;` from `CosmosRepository.cs` and `CosmosDataWriteService.cs`. Added `<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>` to the root `Directory.Build.props` (with explanation) so the Cosmos SDK v3 build guard does not require Newtonsoft across any project in the solution. |
 
 ---
 
@@ -112,7 +113,7 @@ The `PropertyInfo` is resolved on every invocation. It should be cached at const
 
 ## Medium — should be improved
 
-### 7. Dead Newtonsoft.Json dependency
+### ~~7. Dead Newtonsoft.Json dependency~~ ✅ Fixed
 **Files:**
 - `src/CosmoBase.Core/CosmoBase.Core.csproj:40`
 - `src/CosmoBase.Core/Repositories/CosmosRepository.cs:15`
@@ -219,7 +220,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 2 | SQL injection — array query names interpolated into SQL | Security | ✅ Fixed |
 | 3 | Polly registered but never used | Misleading | ✅ Fixed |
 | 4 | CI pipeline has no `dotnet test` step | Reliability | ✅ Fixed |
-| 5 | Dead Newtonsoft.Json dependency | Cleanliness | ⬜ Open |
+| 5 | Dead Newtonsoft.Json dependency | Cleanliness | ✅ Fixed |
 | 6 | Reflection on every write (not cached) | Performance | ✅ Fixed |
 | 7 | `NotImplementedException` explicit interface implementations | Design | ✅ Fixed |
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |

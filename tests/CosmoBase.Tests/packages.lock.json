@@ -1385,7 +1385,6 @@
           "Microsoft.Extensions.Logging.Abstractions": "[9.0.6, )",
           "Microsoft.Extensions.Options": "[9.0.6, )",
           "Microsoft.Extensions.Options.DataAnnotations": "[9.0.6, )",
-          "Newtonsoft.Json": "[13.0.3, )",
           "System.Text.Json": "[9.0.0, )"
         }
       },

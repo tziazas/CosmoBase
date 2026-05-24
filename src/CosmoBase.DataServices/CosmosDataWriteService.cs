@@ -4,7 +4,6 @@ using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using PatchOperationType = CosmoBase.Abstractions.Enums.PatchOperationType;
 
 namespace CosmoBase.DataServices;
