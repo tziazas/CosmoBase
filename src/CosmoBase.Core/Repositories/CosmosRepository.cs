@@ -32,7 +32,6 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     private readonly IMemoryCache _cache;
     private readonly ICosmosValidator<T> _validator;
     private readonly IAuditFieldManager<T> _auditFieldManager;
-    private bool _disposed;
 
     // Compiled delegate that reads the partition-key property from a T instance.
     //

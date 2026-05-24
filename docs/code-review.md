@@ -14,6 +14,7 @@
 | 2026-05-24 | #5 — `NotImplementedException` from explicit interface implementations | Removed `IDataWriteService<TDto, string>` and `IDataReadService<TDto, string>` from the inheritance chains of `ICosmosDataWriteService` and `ICosmosDataReadService`. Removed the three explicit throwing implementations (`IDataWriteService.CreateAsync`, `IDataWriteService.DeleteAsync`, `IDataReadService.GetByIdAsync`). Removed `new` modifier from `CreateAsync`, `UpsertAsync`, `GetAllAsync`, and `QueryAsync` in the Cosmos interfaces. Removed `IDataReadService<,>` and `IDataWriteService<,>` open-generic DI registrations from `ServiceCollectionExtensions.cs`. |
 | 2026-05-24 | #6 — Reflection on every write (not cached) | Replaced `typeof(T).GetProperty(_partitionKeyProperty).GetValue(item)` in `GetPartitionKeyValue` with a compiled `Func<T, string>` delegate (`_getPartitionKey`) built once in the constructor via `Expression.Lambda<Func<T,string>>(...).Compile()`. Added `BuildPartitionKeyAccessor` static helper with step-by-step XML doc explaining the expression tree. Property existence is now validated at construction time rather than on the first write. |
 | 2026-05-24 | #7 — Dead Newtonsoft.Json dependency | Removed `<PackageReference Include="Newtonsoft.Json" />` and the redundant commented-out duplicate from `CosmoBase.Core.csproj`. Removed `using Newtonsoft.Json;` from `CosmosRepository.cs` and `CosmosDataWriteService.cs`. Added `<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>` to the root `Directory.Build.props` (with explanation) so the Cosmos SDK v3 build guard does not require Newtonsoft across any project in the solution. |
+| 2026-05-24 | #8 — `_disposed` dead code | Deleted the `private bool _disposed` field from `CosmosRepository<T>`. The repository does not own its `CosmosClient` instances (they are shared singletons injected via DI) and `Container` is not `IDisposable`, so there are no resources to release and implementing `IDisposable` would be incorrect. |
 
 ---
 
@@ -123,7 +124,7 @@ The `PropertyInfo` is resolved on every invocation. It should be cached at const
 
 ---
 
-### 8. `_disposed` field with no `IDisposable` implementation
+### ~~8. `_disposed` field with no `IDisposable` implementation~~ ✅ Fixed
 **File:** `src/CosmoBase.Core/Repositories/CosmosRepository.cs:35`
 
 ```csharp
@@ -224,7 +225,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 6 | Reflection on every write (not cached) | Performance | ✅ Fixed |
 | 7 | `NotImplementedException` explicit interface implementations | Design | ✅ Fixed |
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |
-| 9 | `_disposed` dead code | Dead code | ⬜ Open |
+| 9 | `_disposed` dead code | Dead code | ✅ Fixed |
 | 10 | `new()` constraint not on interface | Design | ⬜ Open |
 | 11 | Soft delete — no ETag/optimistic concurrency | Correctness | ⬜ Open |
 | 12 | Regex count query conversion fragile | Correctness | ⬜ Open |
