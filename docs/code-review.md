@@ -20,6 +20,7 @@
 | 2026-05-24 | #12 — Soft delete has no optimistic concurrency | Rewrote `SoftDeleteAsync` to call `_readContainer.ReadItemAsync<T>` directly instead of `GetItemAsync`, capturing the `ItemResponse<T>` and its `ETag`. The subsequent `ReplaceItemAsync` now passes `new ItemRequestOptions { IfMatchEtag = readResponse.ETag }`, causing Cosmos to return HTTP 412 PreconditionFailed if the document was modified between the read and the write rather than silently overwriting concurrent changes. NotFound on read returns early (nothing to delete). |
 | 2026-05-24 | #13 — Regex count query conversion fragile | Replaced the single `SELECT \* FROM`-only regex in `ConvertToCountQuery` with three compiled pre-built regexes: (1) `SELECT .+? FROM` to rewrite any SELECT projection to `COUNT(1)`, (2) `ORDER BY .+$` to strip sort clauses invalid in COUNT queries, (3) `OFFSET \S+ LIMIT \S+` to strip pagination. Handles `SELECT *`, named projections, `SELECT VALUE`, JOINs, paginated queries, and mixed-case keywords. Added `[assembly: InternalsVisibleTo("CosmoBase.Tests")]` to `CosmoBase.Core` and 17 unit tests in `SqlQueryExtensionsTests.cs`. |
 | 2026-05-24 | #14 — `GetAllAsync(limit, offset, count)` confusing names | Renamed parameters to `pageSize` (server-side `LIMIT` per round-trip), `offset` (unchanged), and `maxItems` (in-process yield cap) across `ICosmosRepository<T>`, `CosmosRepository<T>`, `ICosmosDataReadService<TDto,TDao>`, and `CosmosDataReadService<TDto,TDao>`. Updated the SQL parameter name from `@limit` to `@pageSize` for consistency. Updated three call sites in the integration tests. |
+| 2026-05-24 | #15 — Cross-partition `GetAllAsync()` had no cost warning | Added `LogWarning` in `CosmosRepository<T>.GetAllAsync()` and `CosmosDataReadService<TDto,TDao>.GetAllAsync()` naming the model type and recommending the partition-scoped overload. Added `<remarks>` XML doc on both `ICosmosRepository<T>` and `ICosmosDataReadService<TDto,TDao>` clearly marking the cross-partition fan-out cost and pointing to the safer overload. |
 | 2026-05-24 | #9 — `new()` constraint not on interface | Removed `new()` from `CosmosRepository<T>`, `ICosmosValidator<in T>`, and `CosmosValidator<T>`. The constraint was never used in any of their bodies and was absent from `ICosmosRepository<T>` and `IAuditFieldManager<T>`, silently narrowing which types could use the concrete implementations. |
 
 ---
@@ -204,7 +205,7 @@ The three parameters (`limit`, `offset`, `count`) are confusing. `limit` is the 
 
 ---
 
-### 15. Cross-partition fan-out `GetAllAsync()` has no warning
+### ~~15. Cross-partition fan-out `GetAllAsync()` has no warning~~ ✅ Fixed
 **File:** `src/CosmoBase.Core/Repositories/CosmosRepository.cs:267`
 
 `GetAllAsync()` with no arguments uses `Queryable.Where(x => !x.Deleted).ToFeedIterator()` on a `GetItemLinqQueryable(true)` (cross-partition). This is an expensive fan-out query with no documentation warning. At minimum the XML doc should note the cost.
@@ -237,5 +238,5 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 12 | Regex count query conversion fragile | Correctness | ✅ Fixed |
 | 13 | Debug tests in test suite | Quality | ✅ Fixed |
 | 14 | `GetAllAsync(limit, offset, count)` naming | Clarity | ✅ Fixed |
-| 15 | Cross-partition `GetAllAsync()` — no cost warning | Docs | ⬜ Open |
+| 15 | Cross-partition `GetAllAsync()` — no cost warning | Docs | ✅ Fixed |
 | 16 | `QueryAsync` should accept `SqlSpecification<T>` directly | API design | ⬜ Open |

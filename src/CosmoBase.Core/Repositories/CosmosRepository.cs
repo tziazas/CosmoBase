@@ -318,7 +318,12 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     /// <inheritdoc/>
     public IAsyncEnumerable<T> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        // x is ICosmosDataModel
+        _logger.LogWarning(
+            "GetAllAsync called without a partition key on {ModelType} — this issues a cross-partition " +
+            "fan-out query that can consume a large number of RUs on big containers. " +
+            "Use GetAllAsync(partitionKey) or a specification-based query when the partition key is known.",
+            typeof(T).Name);
+
         var linq = Queryable.Where(x => !x.Deleted);
         return ExecuteIterator(linq.ToFeedIterator(), cancellationToken);
     }

@@ -139,7 +139,11 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
     /// <inheritdoc />
     public IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        _logger?.LogDebug("Starting cross-partition streaming query");
+        _logger?.LogWarning(
+            "GetAllAsync called without a partition key on {DtoType} — this issues a cross-partition " +
+            "fan-out query that can consume a large number of RUs on big containers. " +
+            "Use GetAllAsync(partitionKey) or a specification-based query when the partition key is known.",
+            typeof(TDto).Name);
 
         try
         {

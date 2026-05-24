@@ -188,10 +188,23 @@ public interface ICosmosRepository<T>
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Streams all documents (non-deleted) asynchronously.
+    /// Streams all non-deleted documents asynchronously across <strong>all partitions</strong>.
     /// </summary>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
-    /// <returns>An async stream of documents.</returns>
+    /// <returns>An async stream of every non-deleted document in the container.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>⚠ Cross-partition fan-out query.</strong>  This overload issues a query with
+    /// <c>allowCrossPartitionQuery = true</c> which causes the Cosmos DB gateway to fan out to
+    /// every physical partition in the container and merge the results.  On large containers this
+    /// can consume a very large number of RUs, take a long time, and may time out.
+    /// </para>
+    /// <para>
+    /// Prefer <see cref="GetAllAsync(string, CancellationToken)"/> when the partition key value
+    /// is known, or scope results with a specification-based query.  Reserve this overload for
+    /// administrative tasks, data migrations, or small containers where a full scan is intentional.
+    /// </para>
+    /// </remarks>
     IAsyncEnumerable<T> GetAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

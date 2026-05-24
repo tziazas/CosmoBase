@@ -86,10 +86,22 @@ public interface ICosmosDataReadService<TDto, TDao>
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Streams all non-deleted documents asynchronously across all partitions.
+    /// Streams all non-deleted documents asynchronously across <strong>all partitions</strong>.
     /// </summary>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
-    /// <returns>An async stream of documents that can be consumed with await foreach.</returns>
+    /// <returns>An async stream of every non-deleted document in the container.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>⚠ Cross-partition fan-out query.</strong>  This overload fans out to every
+    /// physical partition in the container and can consume a very large number of RUs on
+    /// large datasets.
+    /// </para>
+    /// <para>
+    /// Prefer <see cref="GetAllAsync(string, CancellationToken)"/> when the partition key is
+    /// known, or use a specification-based query to scope results.  A runtime warning is logged
+    /// each time this overload is called to aid in operational monitoring.
+    /// </para>
+    /// </remarks>
     IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
