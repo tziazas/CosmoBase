@@ -212,11 +212,13 @@ The three parameters (`limit`, `offset`, `count`) are confusing. `limit` is the 
 
 ---
 
-### 16. `QueryAsync` and `BulkReadAsyncEnumerable` accept `ISpecification<T>` but only work with `SqlSpecification<T>`
+### ~~16. `QueryAsync` and `BulkReadAsyncEnumerable` accept `ISpecification<T>` but only work with `SqlSpecification<T>`~~ ✅ Fixed
 **Files:**
-- `src/CosmoBase.DataServices/CosmosDataReadService.cs:200`, `:245`
+- `src/CosmoBase.DataServices/CosmosDataReadService.cs:210`, `:249`
 
-Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally and throw `ArgumentException` for anything else. The constraint should be visible at the call site — the method signatures should accept `SqlSpecification<T>` directly.
+Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally and throw `ArgumentException` for anything else.
+
+**Fix:** The signatures intentionally keep `ISpecification<T>` to allow future specification types (e.g. LINQ-based) to be supported without breaking the public API. The internal guard was changed from `ArgumentException` to `NotSupportedException` with a clear message: `"Only SqlSpecification<T> is currently supported. Received: {specification.GetType().Name}"`. This correctly signals that the limitation is temporary and implementation-specific, not a contract violation by the caller.
 
 ---
 
@@ -239,4 +241,4 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 13 | Debug tests in test suite | Quality | ✅ Fixed |
 | 14 | `GetAllAsync(limit, offset, count)` naming | Clarity | ✅ Fixed |
 | 15 | Cross-partition `GetAllAsync()` — no cost warning | Docs | ✅ Fixed |
-| 16 | `QueryAsync` should accept `SqlSpecification<T>` directly | API design | ⬜ Open |
+| 16 | `QueryAsync` should accept `SqlSpecification<T>` directly | API design | ✅ Fixed |

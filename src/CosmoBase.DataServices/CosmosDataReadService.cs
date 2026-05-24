@@ -209,7 +209,8 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
 
         if (specification is not SqlSpecification<TDto> sqlSpecification)
         {
-            throw new ArgumentException("Specification must be a SqlSpecification", nameof(specification));
+            throw new NotSupportedException(
+                $"Only SqlSpecification<T> is currently supported. Received: {specification.GetType().Name}");
         }
 
         try
@@ -248,7 +249,8 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
 
         if (specification is not SqlSpecification<TDto> sqlSpecification)
         {
-            throw new ArgumentException("Specification must be a SqlSpecification", nameof(specification));
+            throw new NotSupportedException(
+                $"Only SqlSpecification<T> is currently supported. Received: {specification.GetType().Name}");
         }
 
         _logger?.LogInformation("Starting bulk read operation for partition {PartitionKey}", partitionKey);
