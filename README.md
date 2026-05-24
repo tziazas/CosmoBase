@@ -8,41 +8,41 @@
 [![NuGet](https://img.shields.io/nuget/v/CosmoBase.svg)](https://www.nuget.org/packages/CosmoBase)
 [![License](https://img.shields.io/github/license/tziazas/CosmoBase.svg)](LICENSE)
 
-**CosmoBase** – Enterprise-grade Azure Cosmos DB library with advanced caching, validation, bulk operations, intelligent soft-delete handling, and comprehensive audit field management.
+**CosmoBase** — Enterprise-grade Azure Cosmos DB library for .NET 9. Repository pattern, bulk operations, soft delete, audit trails, intelligent caching, and strongly-typed query abstractions — wired up with a single `AddCosmoBase()` call.
 
 ---
 
-## 🤔 Why CosmoBase?
+## Why CosmoBase?
 
-**Stop reinventing the Cosmos DB wheel.** Every project ends up building the same patterns: audit fields, validation, bulk operations, caching, retry logic. Then you copy-paste between projects, and half your implementations fall behind while the other half get new features.
+Every project ends up building the same patterns: audit fields, validation, bulk operations, caching, retry handling. CosmoBase centralizes that boilerplate so you can focus on business logic.
 
-**CosmoBase centralizes all the boilerplate** so you can focus on your business logic instead of low-level infrastructure concerns. One library, battle-tested patterns, automatic updates for all your projects.
-
-**Raw Cosmos SDK:**
+**Without CosmoBase:**
 ```csharp
-// Manual audit fields, custom retry logic, bulk operation error handling...
 var response = await container.CreateItemAsync(item);
 item.CreatedOnUtc = DateTime.UtcNow;
-item.CreatedBy = GetCurrentUser(); // Hope this works
-// 50+ lines of boilerplate per operation
+item.CreatedBy = currentUser;
+// ...50+ lines of boilerplate per operation, duplicated across every project
 ```
 
 **With CosmoBase:**
 ```csharp
-// Audit fields, retries, validation, bulk operations - all handled
-await _writer.CreateAsync(product);
+var created = await _writer.CreateAsync(product);
+// Audit fields, validation, SDK retry — handled automatically
 ```
-
-**Enterprise-ready from day one** with features you'll eventually need: soft deletes, multi-region routing, comprehensive caching, and bulletproof bulk operations.
 
 ---
 
-# 📖 Table of Contents
+## Table of Contents
 
-- [Why CosmoBase?](#why-cosmobase)
 - [Features](#features)
 - [Installation](#installation)
-- [Quickstart](#quickstart)
+- [Getting Started](#getting-started)
+  - [1. Define Your Models](#1-define-your-models)
+  - [2. Configure](#2-configure)
+  - [3. Register Services](#3-register-services)
+  - [4. Basic Usage](#4-basic-usage)
+- [Read Operations](#read-operations)
+- [Write Operations](#write-operations)
 - [Advanced Features](#advanced-features)
 - [Configuration Reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
@@ -53,46 +53,44 @@ await _writer.CreateAsync(product);
 
 ---
 
-## 🏆 Features
+## Features
 
-### **Core Capabilities**
-- **Named read/write clients**: Configure multiple Cosmos endpoints (primary, replicas, emulator, etc.)
-- **Per-model routing**: Route reads and writes to different endpoints via configuration
-- **High-performance bulk operations**: Parallel upsert/insert with comprehensive error handling
-- **Intelligent caching**: Age-based count caching with automatic invalidation
-- **Advanced validation**: Comprehensive document and parameter validation with extensible rules
+### Core Capabilities
+- **Named read/write clients** — configure multiple Cosmos endpoints (primary, replicas, emulator)
+- **Per-model routing** — route reads and writes to different endpoints via configuration
+- **High-performance bulk operations** — parallel upsert/insert with comprehensive error handling
+- **Intelligent caching** — `IMemoryCache`-backed count caching with automatic TTL and write-through invalidation
+- **Extensible validation** — per-document validation with configurable business rules
 
-### **Query & Paging**
-- **Continuation-token paging**: Efficient, server-side paging without re-scanning
-- **LINQ & SQL queries**: Expression-based or raw SQL, streamed as `IAsyncEnumerable<T>`
-- **Flexible filtering**: Array property queries and dynamic property comparisons
-- **Soft-delete awareness**: Consistent filtering across all query methods
+### Query & Paging
+- **Continuation-token pagination** — efficient server-side paging without re-scanning
+- **SQL queries** — parameterized `SqlSpecification<T>` streamed as `IAsyncEnumerable<T>`
+- **LINQ queries** — `IQueryable<T>` over the container for custom expressions (repository level)
+- **Flexible filtering** — array property queries and dynamic property comparisons with `PropertyFilter`
+- **Soft-delete awareness** — consistent `includeDeleted` filtering across all query methods
 
-### **Enterprise Features**
-- **Comprehensive audit trails**: Automatic `CreatedOnUtc`, `UpdatedOnUtc`, `CreatedBy`, `UpdatedBy` field management
-- **Flexible user context**: Support for web applications, background services, and custom user resolution
-- **Soft-delete support**: Configurable soft-delete with `includeDeleted` parameters
-- **Comprehensive retry policies**: Polly-based retry with exponential backoff
-- **Metrics & observability**: Built-in telemetry and performance monitoring
-- **DTO ↔ DAO mapping**: Zero-dependency default mapper or bring your own (AutoMapper, Mapster)
+### Enterprise Features
+- **Automatic audit trails** — `CreatedOnUtc`, `UpdatedOnUtc`, `CreatedBy`, `UpdatedBy` on every operation
+- **Flexible user context** — HTTP context, system user, or delegate — your choice
+- **Soft delete** — configurable soft delete with ETag-based optimistic concurrency on the underlying replace
+- **Built-in retry** — Cosmos SDK's built-in rate-limit retry with configurable attempts and wait time
+- **Metrics & observability** — `System.Diagnostics.Metrics` histograms and counters compatible with OpenTelemetry, Prometheus, and Azure Monitor
 
-### **Developer Experience**
-- **Resource management**: Automatic disposal of Cosmos clients and resources
-- **Extensive validation**: Early detection of configuration and data issues
-- **Rich error handling**: Detailed error messages with context and suggestions
-- **Type safety**: Strong typing throughout with compile-time validation
+### Developer Experience
+- **DTO ↔ DAO mapping** — zero-dependency default mapper (System.Text.Json round-trip) or bring your own
+- **Strong typing** — generic services and repositories with compile-time type safety
+- **Rich error handling** — `CosmoBaseException` with structured data for programmatic retry logic
+- **Patch operations** — targeted field updates and array element patches via Cosmos DB server-side patch
 
 ---
 
-## 🚀 Installation
-
-From the command line:
+## Installation
 
 ```bash
 dotnet add package CosmoBase
 ```
 
-Or via NuGet Package Manager in Visual Studio:
+Or via NuGet Package Manager:
 
 ```
 Install-Package CosmoBase
@@ -100,9 +98,49 @@ Install-Package CosmoBase
 
 ---
 
-## 📖 Quickstart
+## Getting Started
 
-### 1. Add your configuration
+### 1. Define Your Models
+
+Every document stored in Cosmos DB must have a DAO (Data Access Object) that implements `ICosmosDataModel`. Your application works with a separate DTO (Data Transfer Object) — CosmoBase handles the mapping automatically.
+
+```csharp
+using System.Text.Json.Serialization;
+using CosmoBase.Abstractions.Interfaces;
+
+// DAO — stored in Cosmos DB. Must implement ICosmosDataModel.
+public class ProductDao : ICosmosDataModel
+{
+    [JsonPropertyName("id")]          // Required: Cosmos DB expects lowercase "id"
+    public string Id { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public string Category { get; set; } = string.Empty; // partition key property
+
+    // Audit fields — CosmoBase sets these automatically. Never set them manually.
+    public DateTime? CreatedOnUtc { get; set; }
+    public DateTime? UpdatedOnUtc { get; set; }
+    public string? CreatedBy { get; set; }
+    public string? UpdatedBy { get; set; }
+    public bool Deleted { get; set; }
+}
+
+// DTO — your application-facing model. No audit fields required.
+public class Product
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public string Category { get; set; } = string.Empty;
+}
+```
+
+> **Important:** `ModelName` in configuration must match your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`).
+
+---
+
+### 2. Configure
 
 In `appsettings.json`:
 
@@ -116,7 +154,7 @@ In `appsettings.json`:
         "NumberOfWorkers": 10,
         "AllowBulkExecution": true,
         "ConnectionMode": "Direct",
-        "MaxRetryAttempts": 5,
+        "MaxRetryAttempts": 9,
         "MaxRetryWaitTimeInSeconds": 30
       },
       {
@@ -151,95 +189,106 @@ In `appsettings.json`:
 }
 ```
 
-> **⚠️ Common Configuration Pitfalls:**
-> - **ModelName**: Must match your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`)
-> - **PartitionKey**: Must be the property name from your DAO class (e.g., `"Category"`, not `"/category"`)
->
-> These are the most common configuration mistakes that cause runtime errors!
+> **Common pitfalls:**
+> - `ModelName` must match the DAO class name exactly — `"ProductDao"`, not `"Product"`
+> - `PartitionKey` is the property name on your DAO class — `"Category"`, not `"/category"`
 
-### 2. Register CosmoBase with User Context
+---
 
-**CosmoBase requires a user context for audit field tracking.** Choose the approach that fits your application:
+### 3. Register Services
 
-#### **Web Applications:**
+CosmoBase requires a user context for audit field tracking. Choose the approach that fits your application.
+
+#### Web Applications
+
 ```csharp
-using CosmoBase.DependencyInjection;
 using CosmoBase.Abstractions.Interfaces;
+using CosmoBase.DependencyInjection;
+using Microsoft.AspNetCore.Http;
+using System.Security.Claims;
 
-var builder = WebApplication.CreateBuilder(args);
-
-// Custom user context that reads from HTTP context
+// Implement IUserContext to extract the current user from the HTTP request
 public class WebUserContext : IUserContext
 {
-    private readonly IHttpContextAccessor _httpContextAccessor;
-    
-    public WebUserContext(IHttpContextAccessor httpContextAccessor)
-    {
-        _httpContextAccessor = httpContextAccessor;
-    }
-    
+    private readonly IHttpContextAccessor _accessor;
+
+    public WebUserContext(IHttpContextAccessor accessor)
+        => _accessor = accessor;
+
     public string? GetCurrentUser()
     {
-        var context = _httpContextAccessor.HttpContext;
-        return context?.User?.Identity?.Name 
-            ?? context?.User?.FindFirst("sub")?.Value 
-            ?? "Anonymous";
+        var ctx = _accessor.HttpContext;
+        if (ctx?.User.Identity?.IsAuthenticated == true)
+        {
+            return ctx.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? ctx.User.FindFirst("sub")?.Value
+                ?? ctx.User.Identity.Name;
+        }
+        return "Anonymous";
     }
 }
-
-// Register HTTP context accessor and custom user context
-builder.Services.AddHttpContextAccessor();
-builder.Services.AddSingleton<IUserContext, WebUserContext>();
-
-// Register CosmoBase with user context
-builder.Services.AddCosmoBase(
-    builder.Configuration, 
-    builder.Services.BuildServiceProvider().GetRequiredService<IUserContext>(),
-    config =>
-    {
-        // Optional: Override specific settings
-        config.CosmosClientConfigurations
-              .First(c => c.Name == "Primary")
-              .NumberOfWorkers = 12;
-    });
-
-> **⚠️ Important Configuration Note:**
-> CosmoBase automatically configures System.Text.Json serialization for proper `[JsonPropertyName]` attribute handling. This ensures your DAO's `[JsonPropertyName("id")]` attribute works correctly with Cosmos DB's lowercase "id" requirement.
-
-var app = builder.Build();
 ```
 
-#### **Background Services / Console Applications:**
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddHttpContextAccessor();
+
+// IHttpContextAccessor uses static AsyncLocal state — safe to instantiate directly
+var userContext = new WebUserContext(new HttpContextAccessor());
+
+builder.Services.AddCosmoBase(builder.Configuration, userContext);
+```
+
+#### Background Services / Console Applications
+
 ```csharp
 var builder = Host.CreateApplicationBuilder(args);
 
-// Use system user context for background services
 builder.Services.AddCosmoBaseWithSystemUser(
-    builder.Configuration, 
-    "DataProcessor"); // System user name
-
-var host = builder.Build();
+    builder.Configuration,
+    systemUserName: "DataProcessor"); // Appears in audit fields
 ```
 
-#### **Custom User Resolution:**
-```csharp
-var builder = WebApplication.CreateBuilder(args);
+#### Custom Delegate
 
-// Use delegate for custom user resolution logic
+```csharp
 builder.Services.AddCosmoBaseWithUserProvider(
     builder.Configuration,
-    () => 
-    {
-        // Your custom logic to resolve current user
-        return GetCurrentUserFromJwt() ?? "System";
-    });
-
-var app = builder.Build();
+    () => ResolveCurrentUserFromJwt() ?? "System");
 ```
 
-### 3. Use Data Services (Recommended)
+#### Programmatic Configuration (no appsettings.json)
 
-**High-level data services** provide the best developer experience with automatic audit field management:
+```csharp
+builder.Services.AddCosmoBase(
+    configureOptions: config =>
+    {
+        config.CosmosClientConfigurations = new List<CosmosClientConfiguration>
+        {
+            new() { Name = "Primary", ConnectionString = "...", NumberOfWorkers = 10 }
+        };
+        config.CosmosModelConfigurations = new List<CosmosModelConfiguration>
+        {
+            new()
+            {
+                ModelName = "ProductDao",
+                DatabaseName = "MyDb",
+                CollectionName = "Products",
+                PartitionKey = "Category",
+                ReadCosmosClientConfigurationName = "Primary",
+                WriteCosmosClientConfigurationName = "Primary"
+            }
+        };
+    },
+    userContext: new SystemUserContext("System"));
+```
+
+---
+
+### 4. Basic Usage
+
+Inject `ICosmosDataReadService<TDto, TDao>` and `ICosmosDataWriteService<TDto, TDao>` into your services:
 
 ```csharp
 public class ProductService
@@ -255,429 +304,541 @@ public class ProductService
         _writer = writer;
     }
 
-    public async Task ProcessProductsAsync()
+    public async Task<Product> AddProductAsync(Product product)
     {
-        // Create with automatic validation, retry, and audit fields
-        var newProduct = new Product { Id = "123", Name = "Widget" };
-        await _writer.CreateAsync(newProduct);
-        // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically set
-
-        // Stream products with intelligent caching
-        await foreach (var product in _reader.GetAllAsync(
-            limit: 100, offset: 0, count: 500))
-        {
-            await ProcessProduct(product);
-        }
-
-        // Get cached count (15-minute cache)
-        var totalCount = await _reader.GetCountWithCacheAsync("electronics", 15);
-    }
-}
-```
-
-### 4. Use Repository Directly (Advanced)
-
-For advanced scenarios requiring more control:
-
-```csharp
-public class AdvancedProductService
-{
-    private readonly ICosmosRepository<ProductDao> _repository;
-
-    public AdvancedProductService(ICosmosRepository<ProductDao> repository)
-    {
-        _repository = repository;
+        // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy set automatically
+        return await _writer.CreateAsync(product);
     }
 
-    public async Task AdvancedOperationsAsync()
+    public async Task<Product?> GetProductAsync(string id, string category)
     {
-        // Get item with soft-delete control
-        var product = await _repository.GetItemAsync(
-            "product123", 
-            "electronics", 
-            includeDeleted: false);
-
-        // Intelligent cached count with custom expiry
-        var count = await _repository.GetCountWithCacheAsync(
-            "electronics", 
-            cacheExpiryMinutes: 30);
-
-        // Query with array property filtering
-        var premiumProducts = await _repository.GetAllByArrayPropertyAsync(
-            "tags", 
-            "category", 
-            "premium",
-            includeDeleted: false);
-
-        // Create with automatic audit fields
-        var newProduct = new ProductDao 
-        { 
-            Id = "new-product"
-        };
-        await _repository.CreateItemAsync(newProduct);
-        // CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy automatically populated
-
-        // Bulk operations with detailed error handling and audit fields
-        try
-        {
-            await _repository.BulkUpsertAsync(
-                products, 
-                "electronics", 
-                batchSize: 50, 
-                maxConcurrency: 10);
-        }
-        catch (CosmoBaseException ex) when (ex.Data.Contains("BulkUpsertResult"))
-        {
-            var result = (BulkExecuteResult<ProductDao>)ex.Data["BulkUpsertResult"]!;
-            HandlePartialFailure(result);
-        }
-
-        // Custom LINQ queries
-        var expensiveProducts = _repository.Queryable
-            .Where(p => p.Price > 1000 && !p.Deleted)
-            .ToAsyncEnumerable();
+        return await _reader.GetByIdAsync(id, partitionKey: category);
     }
 }
 ```
 
 ---
 
-## 🔧 Advanced Features
+## Read Operations
 
-### **Comprehensive Audit Field Management**
-
-CosmoBase automatically manages audit fields across all operations:
+### Get by ID
 
 ```csharp
-// All CRUD operations automatically set audit fields
-var product = new ProductDao { Id = "123", Name = "Widget" };
+// Returns null if the document is soft-deleted (default behavior)
+var product = await _reader.GetByIdAsync("product-123", partitionKey: "electronics");
 
-// Create operation sets all fields
-await repository.CreateItemAsync(product);
-// Result: CreatedOnUtc, UpdatedOnUtc, CreatedBy, UpdatedBy all populated
-
-// Update operation sets modified fields only
-product.Name = "Updated Widget";
-await repository.ReplaceItemAsync(product);
-// Result: UpdatedOnUtc and UpdatedBy updated, CreatedOnUtc/CreatedBy preserved
-
-// Upsert operation intelligently determines create vs update
-await repository.UpsertItemAsync(product);
-// Result: Automatically handles create vs update audit field logic
-
-// Bulk operations handle audit fields for all items
-await repository.BulkInsertAsync(products, "partition");
-// Result: All items get proper audit fields based on operation type
+// Include soft-deleted documents
+var deletedProduct = await _reader.GetByIdAsync("product-123", "electronics", includeDeleted: true);
 ```
 
-### **Flexible User Context Options**
-
-Choose the user context approach that fits your application:
+### Stream All Documents
 
 ```csharp
-// 1. System user for background services
-services.AddCosmoBaseWithSystemUser(configuration, "BackgroundService");
-
-// 2. Delegate function for custom logic
-services.AddCosmoBaseWithUserProvider(configuration, () => 
+// Scoped to a single partition — preferred for production use
+await foreach (var product in _reader.GetAllAsync(partitionKey: "electronics"))
 {
-    return HttpContext.Current?.User?.Identity?.Name ?? "Anonymous";
-});
+    await ProcessProduct(product);
+}
 
-// 3. Custom implementation for complex scenarios
-public class JwtUserContext : IUserContext
+// Cross-partition scan — fans out to every partition, high RU cost.
+// A warning is logged each time this overload is called.
+// Reserve for administrative tasks, migrations, or small containers.
+await foreach (var product in _reader.GetAllAsync())
 {
-    public string? GetCurrentUser()
+    await ProcessProduct(product);
+}
+
+// Offset/limit pagination with a stream cap
+// pageSize: items per SDK round-trip (controls RU granularity)
+// offset: items to skip before streaming starts
+// maxItems: total items to yield across all pages
+await foreach (var product in _reader.GetAllAsync(pageSize: 100, offset: 0, maxItems: 500))
+{
+    await ProcessProduct(product);
+}
+```
+
+### Filter by Array Property
+
+Find documents where an array field contains an element with a specific property value:
+
+```csharp
+// Finds Products where Tags[].Type == "premium"
+var premiumProducts = await _reader.GetAllByArrayPropertyAsync(
+    arrayName: "Tags",
+    elementPropertyName: "Type",
+    elementPropertyValue: "premium");
+```
+
+### Filter by Property Comparison
+
+Build dynamic WHERE clauses using `PropertyFilter`:
+
+```csharp
+using CosmoBase.Abstractions.Filters;
+
+var filters = new List<PropertyFilter>
+{
+    new() { PropertyName = "Price",    PropertyValue = 100m, PropertyComparison = PropertyComparison.GreaterThan },
+    new() { PropertyName = "Category", PropertyValue = "electronics", PropertyComparison = PropertyComparison.Equal }
+};
+
+// Filters are combined with AND
+var expensive = await _reader.GetAllByPropertyComparisonAsync(filters);
+```
+
+Available comparisons: `Equal`, `NotEqual`, `GreaterThan`, `LessThan`, `GreaterThanOrEqual`, `LessThanOrEqual`, `In`.
+
+### SQL Specification Queries
+
+For advanced filtering and sorting, use `SqlSpecification<T>` with parameterized queries:
+
+```csharp
+using CosmoBase.Abstractions.Filters;
+
+// Always use parameterized queries — never interpolate values into the query string
+var spec = new SqlSpecification<Product>(
+    "SELECT * FROM c WHERE c.Category = @category AND c.Price > @minPrice ORDER BY c.Price",
+    new Dictionary<string, object>
     {
-        // Extract user from JWT, database, etc.
-        return ExtractUserFromToken();
+        ["@category"] = "electronics",
+        ["@minPrice"]  = 500m
+    });
+
+await foreach (var product in _reader.QueryAsync(spec))
+{
+    Console.WriteLine(product.Name);
+}
+```
+
+### Bulk Read (High-Throughput Streaming)
+
+Stream results in batches for high-volume processing:
+
+```csharp
+var spec = new SqlSpecification<Product>(
+    "SELECT * FROM c WHERE c.Category = @category",
+    new Dictionary<string, object> { ["@category"] = "electronics" });
+
+await foreach (var batch in _reader.BulkReadAsyncEnumerable(
+    spec,
+    partitionKey: "electronics",
+    batchSize: 500,
+    maxConcurrency: 20))
+{
+    await ProcessBatch(batch); // batch is List<Product>
+}
+```
+
+### Count Queries
+
+```csharp
+// Live count (excludes soft-deleted documents)
+var activeCount = await _reader.GetCountAsync(partitionKeyValue: "electronics");
+
+// Total count including soft-deleted documents
+var totalCount = await _reader.GetTotalCountAsync(partitionKeyValue: "electronics");
+
+// Cached count — returns cached value if available and not expired
+var cachedCount = await _reader.GetCountWithCacheAsync(
+    partitionKeyValue: "electronics",
+    cacheExpiryMinutes: 15);  // Set to 0 to always bypass cache
+
+// Manually invalidate the cache for a partition (e.g., after an external bulk load)
+_reader.InvalidateCountCache("electronics");
+```
+
+> Write operations (create, upsert, delete, bulk) automatically invalidate the count cache.
+
+### Continuation-Token Pagination
+
+Efficient page-by-page navigation without re-scanning from the start:
+
+```csharp
+var spec = new SqlSpecification<Product>(
+    "SELECT * FROM c WHERE c.Category = @cat ORDER BY c.Name",
+    new Dictionary<string, object> { ["@cat"] = "electronics" });
+
+string? token = null;
+
+do
+{
+    var (items, nextToken) = await _reader.GetPageWithTokenAsync(
+        spec,
+        partitionKey: "electronics",
+        pageSize: 25,
+        continuationToken: token);
+
+    await RenderPage(items);
+    token = nextToken;
+
+} while (token != null);
+```
+
+To get the total count on the first page only:
+
+```csharp
+var (items, nextToken, totalCount) = await _reader.GetPageWithTokenAndCountAsync(
+    spec,
+    partitionKey: "electronics",
+    pageSize: 25,
+    continuationToken: null); // totalCount is populated on first page only
+
+Console.WriteLine($"Showing 1–{items.Count} of {totalCount} results");
+```
+
+---
+
+## Write Operations
+
+### Create, Replace, Upsert
+
+```csharp
+// Create — fails if a document with the same ID already exists
+var created = await _writer.CreateAsync(new Product { Id = "p-1", Name = "Widget", Category = "tools" });
+
+// Replace — fails if the document does not exist
+product.Name = "Updated Widget";
+var updated = await _writer.ReplaceAsync(product);
+
+// Upsert — creates or replaces, handles audit fields correctly for both cases
+var upserted = await _writer.UpsertAsync(product);
+```
+
+### Delete
+
+```csharp
+// Soft delete — marks Deleted = true, document remains queryable with includeDeleted: true
+await _writer.DeleteAsync("product-123", "electronics", DeleteOptions.SoftDelete);
+
+// Hard delete — permanently removes the document
+await _writer.DeleteAsync("product-123", "electronics", DeleteOptions.HardDelete);
+```
+
+Soft-deleted documents are excluded from all standard queries. To undelete, retrieve the document with `includeDeleted: true` and upsert it back with `Deleted = false`.
+
+### Patch Operations
+
+Patch is ideal for targeted field updates on large documents — lower RU cost than a full replace.
+
+```csharp
+using CosmoBase.Abstractions.Filters;
+using CosmoBase.Abstractions.Enums;
+
+// Apply multiple patch operations atomically
+var patch = new PatchSpecification(
+[
+    new PatchOperationSpecification("/Price",    PatchOperationType.Replace, 299.99m),
+    new PatchOperationSpecification("/StockQty", PatchOperationType.Increment, -1),
+    new PatchOperationSpecification("/Tags",     PatchOperationType.Add,     "sale"),
+]);
+
+var patched = await _writer.PatchDocumentAsync("product-123", "electronics", patch);
+```
+
+> **Note:** Patch operations do not automatically update audit fields (`UpdatedOnUtc`, `UpdatedBy`). Include those operations in your patch spec if needed, or use `ReplaceAsync` for automatic audit management.
+
+#### Patch a Specific Array Element
+
+```csharp
+// Update the "Status" property of array element with Id == "item-456" in the "LineItems" array
+var patched = await _writer.PatchDocumentListItemAsync(
+    id:               "order-789",
+    partitionKey:     "customer-001",
+    listPropertyName: "LineItems",
+    listItemId:       "item-456",
+    parameterName:    "Status",
+    replacementValue: "Shipped");
+```
+
+### Bulk Operations
+
+High-throughput batch writes with automatic audit field management:
+
+```csharp
+// Bulk upsert — creates or replaces each document
+await _writer.BulkUpsertAsync(
+    products,
+    partitionKeySelector: p => p.Category,
+    configureItem: p => { p.LastSyncedAt = DateTime.UtcNow; }, // optional per-item setup
+    batchSize: 100,
+    maxConcurrency: 10);
+
+// Bulk insert — fails if any document already exists
+await _writer.BulkInsertAsync(
+    newProducts,
+    partitionKeySelector: p => p.Category);
+```
+
+Handle partial failures with structured error data:
+
+```csharp
+try
+{
+    await _writer.BulkUpsertAsync(products, p => p.Category);
+}
+catch (CosmoBaseException ex) when (ex.Data.Contains("BulkUpsertResult"))
+{
+    var result = (BulkExecuteResult<ProductDao>)ex.Data["BulkUpsertResult"]!;
+
+    Console.WriteLine($"Succeeded: {result.SuccessCount}, Failed: {result.FailedCount}");
+    Console.WriteLine($"RUs consumed: {result.TotalRequestUnits:F2}");
+
+    // Retry only transient failures
+    var retryable = result.FailedItems
+        .Where(f => f.IsRetryable)
+        .Select(f => f.Item);
+
+    if (retryable.Any())
+        await _writer.BulkInsertAsync(retryable, p => p.Category);
+}
+```
+
+---
+
+## Advanced Features
+
+### Using the Repository Directly
+
+`ICosmosRepository<TDao>` gives you lower-level access with full control. Use it when the data service layer doesn't expose what you need, or when working with DAOs directly in internal services.
+
+```csharp
+public class AdvancedProductService
+{
+    private readonly ICosmosRepository<ProductDao> _repo;
+
+    public AdvancedProductService(ICosmosRepository<ProductDao> repo)
+        => _repo = repo;
+
+    public async Task DoWorkAsync()
+    {
+        // LINQ queries over the container
+        var expensive = _repo.Queryable
+            .Where(p => p.Price > 1000 && !p.Deleted)
+            .ToAsyncEnumerable();
+
+        // Specification-based stream (DAO types)
+        var spec = new SqlSpecification<ProductDao>(
+            "SELECT * FROM c WHERE c.Category = @cat",
+            new Dictionary<string, object> { ["@cat"] = "electronics" });
+
+        await foreach (var dao in _repo.QueryAsync(spec))
+            await Process(dao);
     }
 }
-services.AddCosmoBase(configuration, new JwtUserContext());
-
-// 4. Different contexts for different scenarios
-#if DEBUG
-    services.AddCosmoBase(configuration, new SystemUserContext("Development"));
-#else
-    services.AddCosmoBase(configuration, new ProductionUserContext());
-#endif
 ```
 
-### **Intelligent Caching**
+### Custom Validation
 
-Built-in count caching with age-based invalidation:
-
-```csharp
-// Cache for 15 minutes, auto-invalidated on mutations
-var count = await repository.GetCountWithCacheAsync("partition", 15);
-
-// Force fresh count (bypass cache)
-var freshCount = await repository.GetCountWithCacheAsync("partition", 0);
-
-// Manual cache invalidation (automatic after creates/deletes)
-repository.InvalidateCountCache("partition");
-```
-
-### **Comprehensive Validation**
-
-Extensible validation system with detailed error reporting:
+Override `CosmosValidator<T>` to add business-rule validation that runs before every write operation:
 
 ```csharp
-// Custom validator example
 public class ProductValidator : CosmosValidator<ProductDao>
 {
     public override void ValidateDocument(ProductDao item, string operation, string partitionKeyProperty)
     {
         base.ValidateDocument(item, operation, partitionKeyProperty);
-        
-        // Custom business rules
+
         if (string.IsNullOrEmpty(item.Name))
-            throw new ArgumentException("Product name is required");
-            
+            throw new ArgumentException("Product name is required.");
+
         if (item.Price <= 0)
-            throw new ArgumentException("Product price must be positive");
+            throw new ArgumentException("Product price must be positive.");
     }
 }
 
-// Register custom validator
+// Register before AddCosmoBase — TryAdd means this takes precedence over the default
 services.AddSingleton<ICosmosValidator<ProductDao>, ProductValidator>();
+services.AddCosmoBase(configuration, userContext);
 ```
 
-### **Soft Delete Support**
+### Custom DTO/DAO Mapper
 
-Consistent soft-delete handling across all operations:
-
-```csharp
-// Get active items only (default)
-var activeProducts = await repository.GetAllByArrayPropertyAsync(
-    "categories", "type", "electronics");
-
-// Include soft-deleted items
-var allProducts = await repository.GetAllByArrayPropertyAsync(
-    "categories", "type", "electronics", includeDeleted: true);
-
-// Soft delete vs hard delete
-await repository.DeleteItemAsync("id", "partition", DeleteOptions.SoftDelete);
-await repository.DeleteItemAsync("id", "partition", DeleteOptions.HardDelete);
-```
-
-### **Bulk Operations with Error Handling**
-
-High-performance bulk operations with comprehensive error reporting:
+CosmoBase ships with a `DefaultItemMapper<TDto, TDao>` that serializes to JSON and back (zero reflection at call time). Swap it for AutoMapper, Mapster, or hand-written mappings:
 
 ```csharp
-try
+public class ProductMapper : IItemMapper<Product, ProductDao>
 {
-    await repository.BulkInsertAsync(documents, "partition");
-}
-catch (CosmoBaseException ex) when (ex.Data.Contains("BulkInsertResult"))
-{
-    var result = (BulkExecuteResult<DocumentDao>)ex.Data["BulkInsertResult"]!;
-    
-    Console.WriteLine($"Success rate: {result.SuccessRate:F1}%");
-    Console.WriteLine($"Total RUs consumed: {result.TotalRequestUnits}");
-    
-    // Retry failed items that are retryable
-    var retryableItems = result.FailedItems
-        .Where(f => f.IsRetryable)
-        .Select(f => f.Item);
-    
-    if (retryableItems.Any())
+    public ProductDao ToDao(Product dto) => new ProductDao
     {
-        await repository.BulkInsertAsync(retryableItems, "partition");
+        Id = dto.Id, Name = dto.Name, Price = dto.Price, Category = dto.Category
+    };
+
+    public Product ToDto(ProductDao dao) => new Product
+    {
+        Id = dao.Id, Name = dao.Name, Price = dao.Price, Category = dao.Category
+    };
+
+    // Async stream overloads are provided in the interface
+    public async IAsyncEnumerable<Product> FromDaosAsync(
+        IAsyncEnumerable<ProductDao> daos,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await foreach (var dao in daos.WithCancellation(ct))
+            yield return ToDto(dao);
     }
 }
+
+// Register before AddCosmoBase — TryAdd means this takes precedence
+services.AddSingleton<IItemMapper<Product, ProductDao>, ProductMapper>();
+services.AddCosmoBase(configuration, userContext);
 ```
 
-### **DTO/DAO Mapping**
+### Observability & Metrics
 
-CosmoBase uses a layered approach with automatic JSON-based mapping:
+CosmoBase emits the following `System.Diagnostics.Metrics` instruments under the meter `CosmoBase.CosmosRepository`:
 
-```csharp
-// DTO - exposed to your application
-public class Product
-{
-    public string Id { get; set; }
-    public string Name { get; set; }
-    public decimal Price { get; set; }
-}
+| Metric | Type | Unit | Description |
+|--------|------|------|-------------|
+| `cosmos.request_charge` | Histogram | RU | RUs consumed per Cosmos call |
+| `cosmos.retry_count` | Counter | count | SDK-level retries on rate-limited requests |
+| `cosmos.cache_hit_count` | Counter | count | Count cache hits |
+| `cosmos.cache_miss_count` | Counter | count | Count cache misses |
 
-// DAO - stored in Cosmos DB with audit fields
-public class ProductDao : ICosmosDataModel
-{
-    [JsonPropertyName("id")]
-    public string Id { get; set; }
-    public string Name { get; set; }
-    public decimal Price { get; set; }
-    
-    // Audit fields automatically managed
-    public DateTime? CreatedOnUtc { get; set; }
-    public DateTime? UpdatedOnUtc { get; set; }
-    public string? CreatedBy { get; set; }
-    public string? UpdatedBy { get; set; }
-    public bool Deleted { get; set; }
-}
-
-// Services handle mapping automatically
-var dataService = serviceProvider.GetService<ICosmosDataWriteService<Product, ProductDao>>();
-await dataService.CreateAsync(new Product { Id = "123", Name = "Widget" });
-```
-
-### **Observability & Metrics**
-
-Built-in telemetry for monitoring and performance optimization:
+Wire them up to your preferred backend:
 
 ```csharp
-// Metrics automatically tracked:
-// - cosmos.request_charge (RU consumption)
-// - cosmos.retry_count (Retry attempts)
-// - cosmos.cache_hit_count (Cache effectiveness)
-// - cosmos.cache_miss_count (Cache misses)
+// OpenTelemetry
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m.AddMeter("CosmoBase.CosmosRepository"));
 
-// Access via standard .NET metrics APIs
-// Compatible with OpenTelemetry, Prometheus, Azure Monitor
+// Prometheus (via prometheus-net)
+Metrics.DefaultRegistry.AddMeter("CosmoBase.CosmosRepository");
 ```
 
 ---
 
-## 🛠 Configuration Reference
+## Configuration Reference
 
 <details>
 <summary><strong>CosmosClientConfiguration</strong></summary>
 
-| Property                      | Type      | Description                                                                                          | Default |
-| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------- | ------- |
-| `Name`                        | `string`  | Unique name for this client configuration                                                           | Required |
-| `ConnectionString`            | `string`  | Cosmos DB connection string                                                                          | Required |
-| `NumberOfWorkers`             | `int`     | Degree of parallelism for bulk operations (1-100)                                                   | Required |
-| `AllowBulkExecution`          | `bool?`   | Enable bulk operations for better throughput                                                         | `true` |
-| `ConnectionMode`              | `string?` | Connection mode: "Direct" or "Gateway". Direct is faster, Gateway works better through firewalls    | `"Direct"` |
-| `MaxRetryAttempts`            | `int?`    | Maximum retry attempts for rate-limited requests (0-20)                                             | `9` |
-| `MaxRetryWaitTimeInSeconds`   | `int?`    | Maximum wait time in seconds for retries (1-300)                                                    | `30` |
+| Property | Type | Description | Default |
+|----------|------|-------------|---------|
+| `Name` | `string` | Unique name for this client configuration | Required |
+| `ConnectionString` | `string` | Cosmos DB connection string | Required |
+| `NumberOfWorkers` | `int` | Degree of parallelism for bulk operations (1–100) | Required |
+| `AllowBulkExecution` | `bool?` | Enable bulk execution mode for better throughput | `true` |
+| `ConnectionMode` | `string?` | `"Direct"` (faster) or `"Gateway"` (firewall-friendly) | `"Direct"` |
+| `MaxRetryAttempts` | `int?` | Max SDK retry attempts on rate-limited requests (0–20) | `9` |
+| `MaxRetryWaitTimeInSeconds` | `int?` | Max total wait time for retries (1–300 seconds) | `30` |
 
 </details>
 
 <details>
 <summary><strong>CosmosModelConfiguration</strong></summary>
 
-| Property                              | Description                                                            |
-| ------------------------------------- | ---------------------------------------------------------------------- |
-| `ModelName`                           | **CRITICAL:** Must match your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`) |
-| `DatabaseName`                        | Name of the Cosmos DB database                                         |
-| `CollectionName`                      | Name of the container/collection                                       |
-| `PartitionKey`                        | **CRITICAL:** Must be the property name from your DAO class (e.g., `"Category"`, not `"/category"`) |
-| `ReadCosmosClientConfigurationName`   | Name of the client to use for read operations                          |
-| `WriteCosmosClientConfigurationName`  | Name of the client to use for write operations                         |
+| Property | Description |
+|----------|-------------|
+| `ModelName` | **Must match your DAO class name exactly** (e.g., `"ProductDao"`) |
+| `DatabaseName` | Name of the Cosmos DB database |
+| `CollectionName` | Name of the container |
+| `PartitionKey` | **Property name on your DAO** (e.g., `"Category"`, not `"/category"`) |
+| `ReadCosmosClientConfigurationName` | Name of the client for read operations |
+| `WriteCosmosClientConfigurationName` | Name of the client for write operations |
 
 </details>
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
-### **Common Issues**
+### BadRequest (400) errors
+- Verify `ModelName` matches your DAO class name exactly (`"ProductDao"`, not `"Product"`)
+- Verify `PartitionKey` is the property name, not the path (`"Category"`, not `"/category"`)
+- Confirm your DAO implements `ICosmosDataModel` with `[JsonPropertyName("id")]` on the `Id` property
+- Confirm the container partition key path matches your DAO property (case-sensitive)
 
-**BadRequest (400) errors:**
-- ✅ Ensure `ModelName` matches your DAO class name exactly (e.g., `"ProductDao"`, not `"Product"`)
-- ✅ Ensure `PartitionKey` is the property name from your DAO class (e.g., `"Category"`, not `"/category"`)
-- ✅ Verify your DAO implements `ICosmosDataModel` with `[JsonPropertyName("id")]` on the Id property
-- ✅ Check that your container partition key path matches your DAO property (case-sensitive)
+### Documents not found / wrong results
+- Check whether soft-delete filtering is hiding documents — use `includeDeleted: true` to inspect
+- Verify the partition key value you're passing matches what's stored on the document
 
-**Audit field issues:**
-- ✅ Ensure your user context (`IUserContext`) is properly registered and returns valid user identifiers
-- ✅ For upsert operations, CosmoBase automatically manages audit fields based on document existence
-- ✅ DTOs don't need pre-populated audit fields - CosmoBase handles this automatically
+### Serialization issues
+- CosmoBase configures `System.Text.Json` automatically — do not add a separate `JsonNamingPolicy.CamelCase` that conflicts with partition key casing
+- Always decorate the `Id` property with `[JsonPropertyName("id")]`
 
-**Serialization issues:**
-- ✅ CosmoBase automatically configures System.Text.Json for proper JSON serialization
-- ✅ Use `[JsonPropertyName("id")]` on your DAO's Id property (required by Cosmos DB)
-- ✅ Avoid `PropertyNamingPolicy = JsonNamingPolicy.CamelCase` as it conflicts with partition key casing
+### Service registration issues
+- Register custom `ICosmosValidator<T>` or `IItemMapper<TDto, TDao>` **before** `AddCosmoBase()` — internal registrations use `TryAdd` so yours take precedence
+- Use the exact generic types: `ICosmosDataReadService<TDto, TDao>` and `ICosmosDataWriteService<TDto, TDao>`
 
-**Service registration issues:**
-- ✅ Ensure you're using the correct generic type parameters: `ICosmosDataWriteService<TDto, TDao>`
-- ✅ Verify your user context is registered before calling `AddCosmoBase()`
-- ✅ Check that your configuration section name matches (default: "CosmoBase")
-
----
-
-## 🚀 Performance Best Practices
-
-### **Audit Field Management**
-- User context resolution is cached per operation - no performance penalty
-- Audit fields are set in-memory before Cosmos DB operations
-- Use `SystemUserContext` for background services to avoid HTTP context overhead
-
-### **Bulk Operations**
-- Use batch sizes of 50-100 for optimal throughput
-- Limit concurrency to 10-20 to avoid overwhelming Cosmos DB
-- Handle partial failures gracefully with retry logic
-
-### **Caching**
-- Use 5-15 minute cache expiry for frequently changing data
-- Use 30-60 minute cache expiry for stable reference data
-- Monitor cache hit rates with built-in metrics
-
-### **Querying**
-- Use specific partition keys whenever possible
-- Leverage soft-delete filtering for consistent behavior
-- Stream large result sets with `IAsyncEnumerable<T>`
-
-### **Resource Management**
-- CosmoBase automatically disposes resources
-- Use dependency injection for proper lifecycle management
-- Monitor RU consumption with built-in telemetry
+### Audit fields are empty
+- Ensure your user context is correctly registered and `GetCurrentUser()` returns a non-null value
+- For upsert, CosmoBase checks whether the document exists to decide create vs update audit logic
 
 ---
 
-## 🔄 Migration & Versioning
+## Performance Best Practices
 
-### **Breaking Changes Policy**
+### Partition key discipline
+- Pass the partition key explicitly on every single-item read (`GetByIdAsync`, `GetItemAsync`) — this is a direct point read and costs 1 RU
+- Scope `GetAllAsync`, `QueryAsync`, and count operations to a partition key whenever possible
+- Reserve the no-arg `GetAllAsync()` cross-partition scan for administrative tasks or small containers
 
-CosmoBase follows semantic versioning. Breaking changes will be clearly documented and migration guides provided for major version updates.
+### Bulk operations
+- Batch sizes of 50–100 are optimal for most document sizes
+- Keep `maxConcurrency` at 10–20 to avoid overwhelming your provisioned throughput
+- Handle partial failures with the structured `BulkExecuteResult<T>` — retry only `IsRetryable` items
 
-### **Current Version: 0.1.3**
+### Count caching
+- Use `GetCountWithCacheAsync` for dashboards, pagination headers, or any display that doesn't need real-time accuracy
+- 5–15 minute expiry for frequently-mutating partitions; 30–60 minutes for stable reference data
+- Pass `cacheExpiryMinutes: 0` to bypass the cache and force a fresh query
 
-No breaking changes have been introduced since the initial 0.1.0 release. All updates have been focused on:
-- Package publishing improvements
-- Documentation enhancements
-- Developer experience refinements
+### Patch vs Replace
+- Use `PatchDocumentAsync` for high-frequency, small field updates (status changes, counters) — significantly lower RU cost
+- Use `ReplaceAsync` when you need automatic audit field management or full document validation
 
-### **Future Migration Support**
-
-When breaking changes are necessary (major version bumps), this section will provide:
-- Step-by-step migration instructions
-- Before/after code examples
-- Automated migration tooling where possible
-- Timeline for deprecated feature support
+### Streaming large result sets
+- Prefer `IAsyncEnumerable<T>` methods (`GetAllAsync`, `QueryAsync`) for large datasets — they do not buffer the entire result set in memory
+- Use `BulkReadAsyncEnumerable` for data-pipeline scenarios that benefit from parallel page fetching
 
 ---
 
-## 📄 License
+## Migration & Versioning
+
+### Breaking Changes Policy
+
+CosmoBase follows semantic versioning. Breaking changes are documented with migration guides on major version bumps.
+
+### Current Version: 0.1.4
+
+Changes since 0.1.3:
+
+- **Renamed parameters** on `GetAllAsync(int, int, int)` and `GetCountWithCacheAsync`: `limit` → `pageSize`, `count` → `maxItems` — improves clarity of each parameter's role
+- **Soft delete ETag safety**: soft deletes now use a read-then-replace with `IfMatchEtag` to prevent lost-update races under concurrent writes
+- **Count cache simplified**: `IMemoryCache` owns the TTL entirely; the internal `CachedCountEntry` wrapper has been removed
+- **Newtonsoft.Json removed**: CosmoBase uses `System.Text.Json` exclusively; no Newtonsoft dependency
+- **`new()` constraint removed**: DAO types no longer need a public parameterless constructor
+- **Improved count query regex**: `ConvertToCountQuery` now handles any SELECT projection, ORDER BY, and OFFSET/LIMIT clauses
+
+---
+
+## License
 
 This project is licensed under the [Apache License](LICENSE).
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-Contributions, issues, and feature requests are welcome! Please open an issue or submit a pull request.
+Contributions, issues, and feature requests are welcome. Please open an issue or submit a pull request.
 
-### **Development Setup**
+### Development Setup
 
 1. Clone the repository
-2. Install .NET 9.0 SDK
-3. Run Cosmos DB emulator locally
-4. Execute tests: `dotnet test`
+2. Install the .NET 9 SDK
+3. Run `dotnet build` to verify the solution builds
+4. Run `dotnet test` — unit tests run without external dependencies; integration tests use [Testcontainers.CosmosDb](https://dotnet.testcontainers.org/) and require Docker
 
-### **Contribution Guidelines**
+### Contribution Guidelines
 
 - Follow existing code style and patterns
-- Add unit tests for new features
-- Update documentation for public APIs
-- Ensure all tests pass before submitting PRs
+- Add unit tests for new behaviour in `tests/CosmoBase.Tests/Unit/`
+- Add integration tests for repository-level changes in `tests/CosmoBase.Tests/Integration/`
+- Update XML documentation for all public API changes
 
 ---
 
 <p style="text-align: center;">
-  Made with ❤️ and 🚀 by Achilleas Tziazas
+  Made with care by Achilleas Tziazas
 </p>
