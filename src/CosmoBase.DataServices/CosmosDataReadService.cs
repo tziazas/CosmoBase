@@ -139,7 +139,11 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
     /// <inheritdoc />
     public IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        _logger?.LogDebug("Starting cross-partition streaming query");
+        _logger?.LogWarning(
+            "GetAllAsync called without a partition key on {DtoType} — this issues a cross-partition " +
+            "fan-out query that can consume a large number of RUs on big containers. " +
+            "Use GetAllAsync(partitionKey) or a specification-based query when the partition key is known.",
+            typeof(TDto).Name);
 
         try
         {
@@ -172,22 +176,22 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
     }
 
     /// <inheritdoc />
-    public IAsyncEnumerable<TDto> GetAllAsync(int limit, int offset, int count,
+    public IAsyncEnumerable<TDto> GetAllAsync(int pageSize, int offset, int maxItems,
         CancellationToken cancellationToken = default)
     {
-        if (limit < 1)
-            throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be greater than 0");
+        if (pageSize < 1)
+            throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be greater than 0");
         if (offset < 0)
             throw new ArgumentOutOfRangeException(nameof(offset), "Offset cannot be negative");
-        if (count < 0)
-            throw new ArgumentOutOfRangeException(nameof(count), "Count cannot be negative");
+        if (maxItems < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxItems), "Max items cannot be negative");
 
-        _logger?.LogDebug("Starting offset-based streaming query (limit: {Limit}, offset: {Offset}, count: {Count})",
-            limit, offset, count);
+        _logger?.LogDebug("Starting offset-based streaming query (pageSize: {PageSize}, offset: {Offset}, maxItems: {MaxItems})",
+            pageSize, offset, maxItems);
 
         try
         {
-            return _mapper.FromDaosAsync(_cosmosRepository.GetAllAsync(limit, offset, count, cancellationToken));
+            return _mapper.FromDaosAsync(_cosmosRepository.GetAllAsync(pageSize, offset, maxItems, cancellationToken));
         }
         catch (Exception ex)
         {
@@ -205,7 +209,8 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
 
         if (specification is not SqlSpecification<TDto> sqlSpecification)
         {
-            throw new ArgumentException("Specification must be a SqlSpecification", nameof(specification));
+            throw new NotSupportedException(
+                $"Only SqlSpecification<T> is currently supported. Received: {specification.GetType().Name}");
         }
 
         try
@@ -244,7 +249,8 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
 
         if (specification is not SqlSpecification<TDto> sqlSpecification)
         {
-            throw new ArgumentException("Specification must be a SqlSpecification", nameof(specification));
+            throw new NotSupportedException(
+                $"Only SqlSpecification<T> is currently supported. Received: {specification.GetType().Name}");
         }
 
         _logger?.LogInformation("Starting bulk read operation for partition {PartitionKey}", partitionKey);
@@ -497,13 +503,4 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
         }
     }
 
-    /// <inheritdoc />
-    public Task<TDto> GetByIdAsync(string id, CancellationToken cancellationToken)
-    {
-        _logger?.LogWarning("Attempted to call unsupported GetByIdAsync method with ID only: {DocumentId}", id);
-        throw new CosmoBaseException(
-            $"Cosmos DB operations require both document ID and partition key. " +
-            $"Use GetByIdAsync(string id, string partitionKey, bool includeDeleted) instead. " +
-            $"Document ID: {id}");
-    }
 }

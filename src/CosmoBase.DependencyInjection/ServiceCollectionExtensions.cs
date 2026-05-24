@@ -8,7 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Caching.Memory;
-using Polly;
 using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Abstractions.Interfaces;
 using CosmoBase.Core.Configuration;
@@ -164,10 +163,6 @@ public static class ServiceCollectionExtensions
 
         // D) Core utilities
         services.TryAddSingleton(typeof(IItemMapper<,>), typeof(DefaultItemMapper<,>));
-        services.TryAddSingleton(_ =>
-            Policy.Handle<CosmosException>()
-                .WaitAndRetryAsync(3, i => TimeSpan.FromSeconds(Math.Pow(2, i)))
-        );
 
         // E) Add memory cache for count caching
         services.TryAddSingleton<IMemoryCache, MemoryCache>();
@@ -180,8 +175,6 @@ public static class ServiceCollectionExtensions
 
         // H) Repositories & DataServices
         services.TryAddScoped(typeof(ICosmosRepository<>), typeof(CosmosRepository<>));
-        services.TryAddScoped(typeof(IDataReadService<,>), typeof(CosmosDataReadService<,>));
-        services.TryAddScoped(typeof(IDataWriteService<,>), typeof(CosmosDataWriteService<,>));
         services.TryAddScoped(typeof(ICosmosDataReadService<,>), typeof(CosmosDataReadService<,>));
         services.TryAddScoped(typeof(ICosmosDataWriteService<,>), typeof(CosmosDataWriteService<,>));
 

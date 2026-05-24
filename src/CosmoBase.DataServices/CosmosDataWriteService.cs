@@ -4,7 +4,6 @@ using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using PatchOperationType = CosmoBase.Abstractions.Enums.PatchOperationType;
 
 namespace CosmoBase.DataServices;
@@ -79,14 +78,6 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto, 
             _logger?.LogError(ex, "Unexpected error creating document of type {DtoType}", typeof(TDto).Name);
             throw new CosmoBaseException($"Unexpected error during document creation: {ex.Message}", ex);
         }
-    }
-
-    Task<TDto?> IDataWriteService<TDto, string>.CreateAsync(TDto entity,
-        CancellationToken cancellationToken)
-    {
-        throw new NotImplementedException(
-            "This operation is not implemented for this type. " +
-            "Use ICosmosDataWriteService<TDto, TDao>.CreateAsync instead.");
     }
 
     /// <inheritdoc />
@@ -437,16 +428,6 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto, 
             _logger?.LogError(ex, "Unexpected error deleting document {DocumentId}", id);
             throw new CosmoBaseException($"Unexpected error during document deletion: {ex.Message}", ex);
         }
-    }
-
-    Task<bool> IDataWriteService<TDto, string>.DeleteAsync(
-        string id,
-        CancellationToken cancellationToken)
-    {
-        // either throw to force the new method:
-        throw new CosmoBaseException(
-            "Cosmos DB deletes require both id & partition key. " +
-            "Use DeleteDocumentAsync(id, partitionKey, deleteOptions) instead.");
     }
 
     #endregion

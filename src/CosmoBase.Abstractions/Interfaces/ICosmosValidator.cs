@@ -9,7 +9,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// Defines validation methods for Cosmos DB operations.
 /// </summary>
 /// <typeparam name="T">The document model type.</typeparam>
-public interface ICosmosValidator<in T> where T : class, ICosmosDataModel, new()
+public interface ICosmosValidator<in T> where T : class, ICosmosDataModel
 {
     /// <summary>
     /// Validates the model configuration and partition key setup.

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Net;
 using System.Runtime.CompilerServices;
 using CosmoBase.Abstractions.Configuration;
@@ -12,7 +13,6 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 
 namespace CosmoBase.Core.Repositories;
 
@@ -21,7 +21,7 @@ namespace CosmoBase.Core.Repositories;
 /// Use higher-level services for business logic and DTO mapping.
 /// </summary>
 /// <typeparam name="T">The document model type stored in Cosmos, must implement <see cref="ICosmosDataModel"/> and have a parameterless constructor.</typeparam>
-public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmosDataModel, new()
+public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmosDataModel
 {
     private readonly CosmosClient _readClient;
     private readonly CosmosClient _writeClient;
@@ -32,7 +32,21 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     private readonly IMemoryCache _cache;
     private readonly ICosmosValidator<T> _validator;
     private readonly IAuditFieldManager<T> _auditFieldManager;
-    private bool _disposed;
+
+    // Compiled delegate that reads the partition-key property from a T instance.
+    //
+    // Why a compiled expression instead of typeof(T).GetProperty(...).GetValue(...)?
+    // GetProperty() does a dictionary lookup in the type's metadata on every call.
+    // GetValue() boxes the result and dispatches through the reflection invoke path.
+    // Both costs add up when CreateAsync / ReplaceAsync / UpsertAsync are called at
+    // high throughput.
+    //
+    // Expression.Lambda<Func<T, string>>(...).Compile() emits a real CLR method once
+    // at construction time.  Every subsequent call is a direct property read — the same
+    // cost as writing `item.Category` in source code — with no reflection overhead at
+    // all.  The delegate is stored in a readonly field so it is thread-safe by
+    // construction and shared across all calls on this repository instance.
+    private readonly Func<T, string> _getPartitionKey;
 
     /// <summary>
     /// Initializes a new instance using <paramref name="configuration"/> to locate containers and <paramref name="cosmosClients"/> for database access.
@@ -87,6 +101,11 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
             .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
         _writeContainer = _writeClient
             .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
+
+        // Build the compiled partition-key accessor now that _partitionKeyProperty is known.
+        // Fail fast here (constructor) rather than on the first write so misconfigured
+        // model names surface at startup rather than at runtime.
+        _getPartitionKey = BuildPartitionKeyAccessor(_partitionKeyProperty);
     }
 
     /// <inheritdoc/>
@@ -253,20 +272,58 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
     private async Task SoftDeleteAsync(string id, string partitionKey, CancellationToken cancellationToken)
     {
-        var item = await GetItemAsync(id, partitionKey, true, cancellationToken);
+        _validator.ValidateIdAndPartitionKey(id, partitionKey, "SoftDelete");
+
+        // Read directly via the SDK so we capture the ETag from the response.
+        // GetItemAsync returns only T?, discarding the ItemResponse — we need the
+        // ETag to guard the subsequent replace against concurrent writes.
+        ItemResponse<T> readResponse;
+        try
+        {
+            readResponse = await _readContainer.ReadItemAsync<T>(
+                id,
+                new PartitionKey(partitionKey),
+                cancellationToken: cancellationToken);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return; // Document does not exist — nothing to soft-delete.
+        }
+
+        _logger.LogInformation(
+            "SoftDeleteAsync read: Item {Id} consumed {RequestCharge} RUs.",
+            id, readResponse.RequestCharge);
+
+        var item = readResponse.Resource;
         if (item is null) return;
 
-        // Set the deleted flag and update audit fields
         item.Deleted = true;
         _auditFieldManager.SetUpdateAuditFields(item);
 
-        await ReplaceItemAsync(item, cancellationToken);
+        // IfMatchEtag causes Cosmos to return 412 PreconditionFailed if the document
+        // was modified between the read above and this write, preventing a silent
+        // overwrite of concurrent changes.
+        var writeResponse = await _writeContainer.ReplaceItemAsync(
+            item,
+            id,
+            new PartitionKey(partitionKey),
+            new ItemRequestOptions { IfMatchEtag = readResponse.ETag },
+            cancellationToken);
+
+        _logger.LogInformation(
+            "SoftDeleteAsync replace: Item {Id} consumed {RequestCharge} RUs. Diagnostics: {Diagnostics}",
+            id, writeResponse.RequestCharge, writeResponse.Diagnostics);
     }
 
     /// <inheritdoc/>
     public IAsyncEnumerable<T> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        // x is ICosmosDataModel
+        _logger.LogWarning(
+            "GetAllAsync called without a partition key on {ModelType} — this issues a cross-partition " +
+            "fan-out query that can consume a large number of RUs on big containers. " +
+            "Use GetAllAsync(partitionKey) or a specification-based query when the partition key is known.",
+            typeof(T).Name);
+
         var linq = Queryable.Where(x => !x.Deleted);
         return ExecuteIterator(linq.ToFeedIterator(), cancellationToken);
     }
@@ -283,16 +340,18 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<T> GetAllAsync(int limit, int offset, int count,
+    public IAsyncEnumerable<T> GetAllAsync(int pageSize, int offset, int maxItems,
         CancellationToken cancellationToken = default)
     {
-        var sql = $"SELECT * FROM c WHERE c.Deleted = false OFFSET @offset LIMIT @limit";
+        var sql = $"SELECT * FROM c WHERE c.Deleted = false OFFSET @offset LIMIT @pageSize";
         var def = new QueryDefinition(sql)
             .WithParameter("@offset", offset)
-            .WithParameter("@limit", limit);
+            .WithParameter("@pageSize", pageSize);
         return ExecuteIterator(
             _readContainer.GetItemQueryIterator<T>(def,
-                requestOptions: new QueryRequestOptions { MaxItemCount = limit }), cancellationToken, count);
+                requestOptions: new QueryRequestOptions { MaxItemCount = pageSize }),
+            cancellationToken,
+            maxItems);
     }
 
     private async IAsyncEnumerable<T> ExecuteIterator(
@@ -426,91 +485,65 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         // Generate unique cache key for this model type + partition
         var cacheKey = $"count_{typeof(T).Name}_{partitionKey}";
 
-        // If cache expiry is 0, always bypass cache
+        // cacheExpiryMinutes == 0 means "always bypass" — skip the cache entirely.
         if (cacheExpiryMinutes == 0)
         {
             _logger.LogDebug("Cache bypass requested for count query on partition {PartitionKey}", partitionKey);
-            return await GetFreshCountAsync(partitionKey, cacheKey, cancellationToken);
+            return await GetCountAsync(partitionKey, cancellationToken);
         }
 
-        // Check if we have cached data
-        if (_cache.TryGetValue(cacheKey, out CachedCountEntry? cachedEntry) && cachedEntry != null)
+        // IMemoryCache owns the TTL — if the key is present the entry has not yet expired.
+        // No manual age arithmetic needed.
+        if (_cache.TryGetValue(cacheKey, out int cachedCount))
         {
-            var age = DateTime.UtcNow - cachedEntry.CachedAt;
-            var expiryThreshold = TimeSpan.FromMinutes(cacheExpiryMinutes);
-
-            if (age <= expiryThreshold)
-            {
-                _logger.LogDebug(
-                    "Returning cached count {Count} for partition {PartitionKey} (age: {Age:mm\\:ss})",
-                    cachedEntry.Count,
-                    partitionKey,
-                    age
-                );
-
-                // Record cache hit metric
-                CosmosRepositoryMetrics.CacheHitCount.Add(1,
-                    new KeyValuePair<string, object?>("model", typeof(T).Name),
-                    new KeyValuePair<string, object?>("operation", "GetCountCache")
-                );
-
-                return cachedEntry.Count;
-            }
-
             _logger.LogDebug(
-                "Cached count for partition {PartitionKey} expired (age: {Age:mm\\:ss} > threshold: {Threshold:mm\\:ss})",
-                partitionKey,
-                age,
-                expiryThreshold
+                "Returning cached count {Count} for partition {PartitionKey}",
+                cachedCount,
+                partitionKey
             );
-        }
-        else
-        {
-            _logger.LogDebug("No cached count found for partition {PartitionKey}", partitionKey);
+
+            CosmosRepositoryMetrics.CacheHitCount.Add(1,
+                new KeyValuePair<string, object?>("model", typeof(T).Name),
+                new KeyValuePair<string, object?>("operation", "GetCountCache")
+            );
+
+            return cachedCount;
         }
 
-        // Cache miss or expired - get fresh count
-        return await GetFreshCountAsync(partitionKey, cacheKey, cancellationToken);
+        _logger.LogDebug("No cached count found for partition {PartitionKey}", partitionKey);
+
+        return await GetFreshCountAsync(partitionKey, cacheKey, cacheExpiryMinutes, cancellationToken);
     }
 
     /// <summary>
-    /// Performs a fresh COUNT query and updates the cache with the result.
+    /// Performs a fresh COUNT query, stores the result in the cache with the caller-supplied
+    /// TTL, and returns the count.
     /// </summary>
     private async Task<int> GetFreshCountAsync(string partitionKey, string cacheKey,
-        CancellationToken cancellationToken)
+        int cacheExpiryMinutes, CancellationToken cancellationToken)
     {
         _logger.LogDebug("Executing fresh count query for partition {PartitionKey}", partitionKey);
 
-        // Record cache miss metric
         CosmosRepositoryMetrics.CacheMissCount.Add(1,
             new KeyValuePair<string, object?>("model", typeof(T).Name),
             new KeyValuePair<string, object?>("operation", "GetCountCache")
         );
 
-        // Get fresh count using existing method
         var count = await GetCountAsync(partitionKey, cancellationToken);
 
-        // Cache the result with absolute expiration (we'll check age manually)
-        var cacheEntry = new CachedCountEntry
+        // Let IMemoryCache own the expiry — no wrapper class or manual age-check needed.
+        _cache.Set(cacheKey, count, new MemoryCacheEntryOptions
         {
-            Count = count,
-            CachedAt = DateTime.UtcNow
-        };
-
-        // Set cache with generous absolute expiration (we handle expiry manually)
-        var cacheOptions = new MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24), // Generous fallback
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(cacheExpiryMinutes),
             Priority = CacheItemPriority.Normal,
-            Size = 1 // Simple size for cache pressure management
-        };
-
-        _cache.Set(cacheKey, cacheEntry, cacheOptions);
+            Size = 1
+        });
 
         _logger.LogInformation(
-            "Cached fresh count {Count} for partition {PartitionKey}",
+            "Cached fresh count {Count} for partition {PartitionKey} (TTL: {Minutes} min)",
             count,
-            partitionKey
+            partitionKey,
+            cacheExpiryMinutes
         );
 
         return count;
@@ -889,17 +922,43 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <summary>
-    /// Reads the value of the partition-key property (by name) from the given item.
+    /// Returns the partition-key value for <paramref name="item"/> using the pre-compiled
+    /// delegate.  Call cost is identical to a direct property access.
     /// </summary>
     private string GetPartitionKeyValue(T item)
     {
-        var prop = typeof(T).GetProperty(_partitionKeyProperty)
-                   ?? throw new InvalidOperationException(
-                       $"Partition-key property '{_partitionKeyProperty}' not found on type '{typeof(T).Name}'");
-        var raw = prop.GetValue(item)
-                  ?? throw new InvalidOperationException(
-                      $"Partition-key value for '{_partitionKeyProperty}' on '{typeof(T).Name}' was null");
-        return raw.ToString()!;
+        var value = _getPartitionKey(item);
+        if (value is null)
+            throw new InvalidOperationException(
+                $"Partition-key value for '{_partitionKeyProperty}' on '{typeof(T).Name}' was null");
+        return value;
+    }
+
+    /// <summary>
+    /// Builds a compiled <see cref="Func{T, String}"/> that reads the named property from
+    /// an instance of <typeparamref name="T"/> without reflection overhead at call time.
+    /// </summary>
+    /// <remarks>
+    /// The expression tree produced is equivalent to: <c>item => item.{propertyName}.ToString()</c>
+    ///
+    /// Step-by-step:
+    ///   1. <c>Expression.Parameter</c> declares the lambda's input parameter ("item").
+    ///   2. <c>Expression.Property</c> emits a member-access node for the named property.
+    ///      This validates that the property exists on T and throws here (construction time)
+    ///      rather than on the first write if the configuration is wrong.
+    ///   3. <c>Expression.Call</c> wraps the property access in a ToString() call so
+    ///      the lambda always returns string regardless of the underlying property type
+    ///      (string, Guid, int, etc.).
+    ///   4. <c>Expression.Lambda&lt;TDelegate&gt;</c> packages nodes 1–3 into a typed lambda.
+    ///   5. <c>.Compile()</c> JIT-compiles the expression tree into a real CLR delegate.
+    ///      This is the only expensive step and happens exactly once per repository instance.
+    /// </remarks>
+    private static Func<T, string> BuildPartitionKeyAccessor(string propertyName)
+    {
+        var param    = Expression.Parameter(typeof(T), "item");
+        var property = Expression.Property(param, propertyName); // throws ArgumentException if not found
+        var toString = Expression.Call(property, nameof(object.ToString), Type.EmptyTypes);
+        return Expression.Lambda<Func<T, string>>(toString, param).Compile();
     }
 
     /// <summary>

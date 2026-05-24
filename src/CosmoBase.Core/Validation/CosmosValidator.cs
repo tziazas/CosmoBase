@@ -11,7 +11,7 @@ namespace CosmoBase.Core.Validation;
 /// Default implementation of Cosmos DB validation logic.
 /// </summary>
 /// <typeparam name="T">The document model type.</typeparam>
-public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDataModel, new()
+public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDataModel
 {
     /// <inheritdoc/>
     public void ValidateModelConfiguration(string partitionKeyProperty)
@@ -190,10 +190,22 @@ public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDa
     {
         if (string.IsNullOrWhiteSpace(arrayName))
             throw new ArgumentException("Array name cannot be null or empty", nameof(arrayName));
-        
+
+        if (!CosmosValidationConstants.SafePropertyNamePattern.IsMatch(arrayName))
+            throw new ArgumentException(
+                $"Array name '{arrayName}' contains invalid characters. " +
+                "Only letters, digits, underscores, and dots are allowed, and the name must start with a letter or underscore.",
+                nameof(arrayName));
+
         if (string.IsNullOrWhiteSpace(elementPropertyName))
             throw new ArgumentException("Element property name cannot be null or empty", nameof(elementPropertyName));
-        
+
+        if (!CosmosValidationConstants.SafePropertyNamePattern.IsMatch(elementPropertyName))
+            throw new ArgumentException(
+                $"Element property name '{elementPropertyName}' contains invalid characters. " +
+                "Only letters, digits, underscores, and dots are allowed, and the name must start with a letter or underscore.",
+                nameof(elementPropertyName));
+
         if (elementPropertyValue == null)
             throw new ArgumentNullException(nameof(elementPropertyValue), "Element property value cannot be null");
     }

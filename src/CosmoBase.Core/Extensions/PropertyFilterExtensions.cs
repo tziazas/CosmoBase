@@ -12,16 +12,22 @@ namespace CosmoBase.Core.Extensions;
 public static class PropertyFilterExtensions
 {
     /// <summary>
-    /// Builds the SQL WHERE clause (without the leading “WHERE ”) for the given filters.
+    /// Builds the SQL WHERE clause (without the leading "WHERE ") for the given filters.
+    /// All values — including those in IN clauses — are emitted as named parameters;
+    /// call <see cref="AddParameters"/> with the same list to bind them.
     /// </summary>
     public static string BuildSqlWhereClause(this IEnumerable<PropertyFilter> filters)
     {
         if (filters == null) throw new ArgumentNullException(nameof(filters));
 
+        var filterList = filters as IList<PropertyFilter> ?? filters.ToList();
         var parts = new List<string>();
-        foreach (var f in filters)
+
+        for (var idx = 0; idx < filterList.Count; idx++)
         {
+            var f = filterList[idx];
             var col = f.PropertyName.StartsWith("@") ? f.PropertyName.Substring(1) : f.PropertyName;
+
             switch (f.PropertyComparison)
             {
                 case PropertyComparison.Equal:
@@ -43,10 +49,9 @@ public static class PropertyFilterExtensions
                     parts.Add($"c.{col} <= {f.PropertyName}");
                     break;
                 case PropertyComparison.In:
-                    // We'll embed literals directly for IN
-                    var list = (IEnumerable<object>)f.PropertyValue;
-                    var inList = string.Join(", ", list.Select(v => $"'{v}'"));
-                    parts.Add($"c.{col} IN ({inList})");
+                    var values = ((IEnumerable<object>)f.PropertyValue).ToList();
+                    var paramNames = values.Select((_, i) => $"@{col}_{idx}_in_{i}");
+                    parts.Add($"c.{col} IN ({string.Join(", ", paramNames)})");
                     break;
                 default:
                     throw new NotSupportedException($"Comparison {f.PropertyComparison} not supported");
@@ -59,17 +64,30 @@ public static class PropertyFilterExtensions
     }
 
     /// <summary>
-    /// Adds all non-IN parameters from your filters into the <paramref name="def"/>.
+    /// Binds all filter values into <paramref name="def"/> as named parameters,
+    /// including each individual value from IN-list filters.
+    /// Must be called with the same filter list used to build the WHERE clause.
     /// </summary>
     public static void AddParameters(this IEnumerable<PropertyFilter> filters, QueryDefinition def)
     {
         if (filters == null) throw new ArgumentNullException(nameof(filters));
         if (def == null) throw new ArgumentNullException(nameof(def));
 
-        foreach (var f in filters)
+        var filterList = filters as IList<PropertyFilter> ?? filters.ToList();
+
+        for (var idx = 0; idx < filterList.Count; idx++)
         {
+            var f = filterList[idx];
+
             if (f.PropertyComparison == PropertyComparison.In)
-                continue;   // we inlined literals for IN
+            {
+                var col = f.PropertyName.StartsWith("@") ? f.PropertyName.Substring(1) : f.PropertyName;
+                var values = ((IEnumerable<object>)f.PropertyValue).ToList();
+                for (var i = 0; i < values.Count; i++)
+                    def.WithParameter($"@{col}_{idx}_in_{i}", values[i]);
+                continue;
+            }
+
             def.WithParameter(f.PropertyName, f.PropertyValue);
         }
     }

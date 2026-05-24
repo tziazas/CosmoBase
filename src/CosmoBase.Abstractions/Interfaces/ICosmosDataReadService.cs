@@ -19,8 +19,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// All query operations respect the soft delete pattern and include comprehensive error handling,
 /// logging, and telemetry for production monitoring and debugging.
 /// </remarks>
-public interface
-    ICosmosDataReadService<TDto, TDao> : IDataReadService<TDto, string> // Here we use string because that is the key
+public interface ICosmosDataReadService<TDto, TDao>
     where TDto : class
     where TDao : ICosmosDataModel
 {
@@ -87,11 +86,23 @@ public interface
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Streams all non-deleted documents asynchronously across all partitions.
+    /// Streams all non-deleted documents asynchronously across <strong>all partitions</strong>.
     /// </summary>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
-    /// <returns>An async stream of documents that can be consumed with await foreach.</returns>
-    new IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default);
+    /// <returns>An async stream of every non-deleted document in the container.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>⚠ Cross-partition fan-out query.</strong>  This overload fans out to every
+    /// physical partition in the container and can consume a very large number of RUs on
+    /// large datasets.
+    /// </para>
+    /// <para>
+    /// Prefer <see cref="GetAllAsync(string, CancellationToken)"/> when the partition key is
+    /// known, or use a specification-based query to scope results.  A runtime warning is logged
+    /// each time this overload is called to aid in operational monitoring.
+    /// </para>
+    /// </remarks>
+    IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streams all non-deleted documents within a specific partition asynchronously.
@@ -102,14 +113,18 @@ public interface
     IAsyncEnumerable<TDto> GetAllAsync(string partitionKey, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Streams a subset of documents using offset and limit semantics for pagination scenarios.
+    /// Streams a subset of documents using SQL-level offset/limit pagination with an optional
+    /// in-process item cap.
     /// </summary>
-    /// <param name="limit">Maximum number of items to request per server-side page from Cosmos DB.</param>
-    /// <param name="offset">Number of items to skip before beginning to return results.</param>
-    /// <param name="count">Total maximum number of items to yield from the stream.</param>
+    /// <param name="pageSize">
+    /// Number of items fetched per SDK round-trip (<c>LIMIT</c> in the Cosmos SQL query).
+    /// Controls RU and network granularity, not the total items returned.
+    /// </param>
+    /// <param name="offset">Number of items to skip before streaming begins (<c>OFFSET</c> in SQL).</param>
+    /// <param name="maxItems">Maximum total number of items to yield from the stream across all pages.</param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
-    /// <returns>An async stream of documents after applying offset/limit/count constraints.</returns>
-    IAsyncEnumerable<TDto> GetAllAsync(int limit, int offset, int count,
+    /// <returns>An async stream of at most <paramref name="maxItems"/> documents.</returns>
+    IAsyncEnumerable<TDto> GetAllAsync(int pageSize, int offset, int maxItems,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -121,7 +136,7 @@ public interface
     /// </param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents matching the specification criteria.</returns>
-    new IAsyncEnumerable<TDto> QueryAsync(ISpecification<TDto> specification,
+    IAsyncEnumerable<TDto> QueryAsync(ISpecification<TDto> specification,
         CancellationToken cancellationToken = default);
 
     /// <summary>
