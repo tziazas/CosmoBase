@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 
 namespace CosmoBase.Core.Validation;
 
@@ -7,6 +8,13 @@ namespace CosmoBase.Core.Validation;
 /// </summary>
 internal static class CosmosValidationConstants
 {
+    /// <summary>
+    /// Regex that matches safe Cosmos DB property identifier names.
+    /// Allows letters, digits, underscores, and dots (for nested paths such as "order.items").
+    /// Must start with a letter or underscore.
+    /// </summary>
+    public static readonly Regex SafePropertyNamePattern =
+        new(@"^[a-zA-Z_][a-zA-Z0-9_.]*$", RegexOptions.Compiled);
     /// <summary>
     /// Types supported for partition key properties.
     /// </summary>
