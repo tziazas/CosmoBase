@@ -10,6 +10,7 @@
 | 2026-05-24 | #1 — SQL injection (`IN` clause) | `PropertyFilterExtensions.BuildSqlWhereClause` now emits `@{col}_{filterIdx}_in_{valueIdx}` parameters for `IN` filters instead of inlining string literals. `AddParameters` updated to bind each value. 17 unit tests added at `tests/CosmoBase.Tests/Unit/Extensions/PropertyFilterExtensionsTests.cs`. |
 | 2026-05-24 | #2 — SQL injection (array query identifiers) | `CosmosValidationConstants` now exposes a compiled `SafePropertyNamePattern` regex (`^[a-zA-Z_][a-zA-Z0-9_.]*$`). `CosmosValidator.ValidateArrayPropertyQuery` validates both `arrayName` and `elementPropertyName` against this pattern before they are interpolated into SQL, rejecting anything containing spaces, quotes, semicolons, or other non-identifier characters. 35 unit tests added at `tests/CosmoBase.Tests/Unit/Validators/CosmosValidatorArrayQueryTests.cs`. |
 | 2026-05-24 | #3 — Polly registered but never used | Removed `TryAddSingleton` Polly registration and `using Polly;` from `ServiceCollectionExtensions.cs`. Removed `<PackageReference Include="Polly" />` from `CosmoBase.Core.csproj` and stale release note entry. 10 DI registration unit tests added at `tests/CosmoBase.Tests/Unit/DependencyInjection/ServiceRegistrationTests.cs`. |
+| 2026-05-24 | #4 — CI pipeline had no test step | Restructured `.github/workflows/publish.yml` into two jobs: `test` (unit + integration, uploads `.trx` results) and `publish` (`needs: test`). Replaced verbose per-project restore/build with `dotnet build CosmoBase.sln`. |
 
 ---
 
@@ -67,10 +68,12 @@ Supporting separate read and write clients per model type is a real production n
 
 ---
 
-### 4. CI pipeline never runs tests
+### ~~4. CI pipeline never runs tests~~ ✅ Fixed
 **File:** `.github/workflows/publish.yml`
 
-The workflow chain is: restore → build → pack → publish. There is no `dotnet test` step. Broken code can be tagged and published to NuGet.
+~~The workflow chain is: restore → build → pack → publish. There is no `dotnet test` step.~~
+
+**Fix:** Restructured into two jobs. `test` runs first: restores and builds the full solution (`CosmoBase.sln`), then runs unit tests (`FullyQualifiedName~.Unit.`) and integration tests (`FullyQualifiedName~.Integration.`) as separate steps with `.trx` results uploaded as an artifact. `publish` has `needs: test`, so a failing test blocks the tag from reaching NuGet. The verbose per-project restore/build was also replaced with a single solution-level `dotnet build CosmoBase.sln`.
 
 ---
 
@@ -208,7 +211,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 1 | SQL injection — `IN` clause values not parameterized | Security | ✅ Fixed |
 | 2 | SQL injection — array query names interpolated into SQL | Security | ✅ Fixed |
 | 3 | Polly registered but never used | Misleading | ✅ Fixed |
-| 4 | CI pipeline has no `dotnet test` step | Reliability | ⬜ Open |
+| 4 | CI pipeline has no `dotnet test` step | Reliability | ✅ Fixed |
 | 5 | Dead Newtonsoft.Json dependency | Cleanliness | ⬜ Open |
 | 6 | Reflection on every write (not cached) | Performance | ⬜ Open |
 | 7 | `NotImplementedException` explicit interface implementations | Design | ⬜ Open |

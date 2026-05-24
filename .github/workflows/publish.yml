@@ -6,27 +6,77 @@ on:
       - 'v*.*.*'
 
 jobs:
-  build-and-publish:
+  # -----------------------------------------------------------------------
+  # Job 1: Test
+  # Unit tests run first (fast, no Docker).
+  # Integration tests follow (Testcontainers spins up the Cosmos emulator).
+  # The publish job is gated on this job succeeding.
+  # -----------------------------------------------------------------------
+  test:
     runs-on: ubuntu-latest
     steps:
-      # 1. Checkout full history for GitVersion to work
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Install .NET SDK
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: '9.0.x'
 
-      # 3. Install GitVersion to calculate SemVer from your Git history
+      - name: Restore
+        run: dotnet restore CosmoBase.sln
+
+      - name: Build
+        run: dotnet build CosmoBase.sln --configuration Release --no-restore
+
+      - name: Unit tests
+        run: |
+          dotnet test CosmoBase.sln \
+            --configuration Release \
+            --no-build \
+            --filter "FullyQualifiedName~.Unit." \
+            --logger "trx;LogFileName=unit-results.trx" \
+            --results-directory ./test-results
+
+      - name: Integration tests
+        run: |
+          dotnet test CosmoBase.sln \
+            --configuration Release \
+            --no-build \
+            --filter "FullyQualifiedName~.Integration." \
+            --logger "trx;LogFileName=integration-results.trx" \
+            --results-directory ./test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./test-results/*.trx
+
+  # -----------------------------------------------------------------------
+  # Job 2: Publish
+  # Only runs after all tests pass.
+  # -----------------------------------------------------------------------
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.0.x'
+
       - name: Setup GitVersion
         uses: GitTools/actions/gitversion/setup@v0.9.13
         with:
           versionSpec: '5.x'
 
-      # 4. Restore & build the project
       - name: Run GitVersion
         id: gitversion
         uses: GitTools/actions/gitversion/execute@v0.9.13
@@ -35,19 +85,8 @@ jobs:
           configFilePath: GitVersion.yml
 
       - name: Restore & Build
-        run: |
-          dotnet restore src/CosmoBase.Abstractions/CosmoBase.Abstractions.csproj
-          dotnet restore src/CosmoBase.Core/CosmoBase.Core.csproj
-          dotnet restore src/CosmoBase.DataServices/CosmoBase.DataServices.csproj
-          dotnet restore src/CosmoBase.DependencyInjection/CosmoBase.DependencyInjection.csproj
-          dotnet restore src/CosmoBase/CosmoBase.csproj
-          dotnet build src/CosmoBase.Abstractions/CosmoBase.Abstractions.csproj --configuration Release
-          dotnet build src/CosmoBase.Core/CosmoBase.Core.csproj --configuration Release
-          dotnet build src/CosmoBase.DataServices/CosmoBase.DataServices.csproj --configuration Release
-          dotnet build src/CosmoBase.DependencyInjection/CosmoBase.DependencyInjection.csproj --configuration Release
-          dotnet build src/CosmoBase/CosmoBase.csproj --configuration Release
-          
-      # Pack all projects
+        run: dotnet build CosmoBase.sln --configuration Release
+
       - name: Pack
         run: |
           dotnet pack src/CosmoBase.Abstractions/CosmoBase.Abstractions.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
@@ -55,11 +94,8 @@ jobs:
           dotnet pack src/CosmoBase.DataServices/CosmoBase.DataServices.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
           dotnet pack src/CosmoBase.DependencyInjection/CosmoBase.DependencyInjection.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
           dotnet pack src/CosmoBase/CosmoBase.csproj --configuration Release --no-build /p:Version=${{ steps.gitversion.outputs.NuGetVersion }}
-        
-        
-      # 6. Push only when this run was triggered by a tag (v*.*.*)
+
       - name: Push to NuGet.org
-        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           dotnet nuget push src/**/bin/Release/*.nupkg \
             --api-key ${{ secrets.NUGET_API_KEY }} \
