@@ -15,6 +15,7 @@
 | 2026-05-24 | #6 — Reflection on every write (not cached) | Replaced `typeof(T).GetProperty(_partitionKeyProperty).GetValue(item)` in `GetPartitionKeyValue` with a compiled `Func<T, string>` delegate (`_getPartitionKey`) built once in the constructor via `Expression.Lambda<Func<T,string>>(...).Compile()`. Added `BuildPartitionKeyAccessor` static helper with step-by-step XML doc explaining the expression tree. Property existence is now validated at construction time rather than on the first write. |
 | 2026-05-24 | #7 — Dead Newtonsoft.Json dependency | Removed `<PackageReference Include="Newtonsoft.Json" />` and the redundant commented-out duplicate from `CosmoBase.Core.csproj`. Removed `using Newtonsoft.Json;` from `CosmosRepository.cs` and `CosmosDataWriteService.cs`. Added `<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>` to the root `Directory.Build.props` (with explanation) so the Cosmos SDK v3 build guard does not require Newtonsoft across any project in the solution. |
 | 2026-05-24 | #8 — `_disposed` dead code | Deleted the `private bool _disposed` field from `CosmosRepository<T>`. The repository does not own its `CosmosClient` instances (they are shared singletons injected via DI) and `Container` is not `IDisposable`, so there are no resources to release and implementing `IDisposable` would be incorrect. |
+| 2026-05-24 | #9 — `new()` constraint not on interface | Removed `new()` from `CosmosRepository<T>`, `ICosmosValidator<in T>`, and `CosmosValidator<T>`. The constraint was never used in any of their bodies and was absent from `ICosmosRepository<T>` and `IAuditFieldManager<T>`, silently narrowing which types could use the concrete implementations. |
 
 ---
 
@@ -135,7 +136,7 @@ This field is never read, never written, and the class does not implement `IDisp
 
 ---
 
-### 9. `new()` constraint mismatch between interface and implementation
+### ~~9. `new()` constraint mismatch between interface and implementation~~ ✅ Fixed
 **File:** `src/CosmoBase.Core/Repositories/CosmosRepository.cs:24`
 
 ```csharp
@@ -226,7 +227,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 7 | `NotImplementedException` explicit interface implementations | Design | ✅ Fixed |
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |
 | 9 | `_disposed` dead code | Dead code | ✅ Fixed |
-| 10 | `new()` constraint not on interface | Design | ⬜ Open |
+| 10 | `new()` constraint not on interface | Design | ✅ Fixed |
 | 11 | Soft delete — no ETag/optimistic concurrency | Correctness | ⬜ Open |
 | 12 | Regex count query conversion fragile | Correctness | ⬜ Open |
 | 13 | Debug tests in test suite | Quality | ⬜ Open |

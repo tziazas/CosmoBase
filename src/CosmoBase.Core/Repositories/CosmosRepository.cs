@@ -21,7 +21,7 @@ namespace CosmoBase.Core.Repositories;
 /// Use higher-level services for business logic and DTO mapping.
 /// </summary>
 /// <typeparam name="T">The document model type stored in Cosmos, must implement <see cref="ICosmosDataModel"/> and have a parameterless constructor.</typeparam>
-public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmosDataModel, new()
+public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmosDataModel
 {
     private readonly CosmosClient _readClient;
     private readonly CosmosClient _writeClient;

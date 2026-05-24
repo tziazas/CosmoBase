@@ -11,7 +11,7 @@ namespace CosmoBase.Core.Validation;
 /// Default implementation of Cosmos DB validation logic.
 /// </summary>
 /// <typeparam name="T">The document model type.</typeparam>
-public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDataModel, new()
+public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDataModel
 {
     /// <inheritdoc/>
     public void ValidateModelConfiguration(string partitionKeyProperty)
