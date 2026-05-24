@@ -9,6 +9,7 @@
 |------|---------|--------------|
 | 2026-05-24 | #1 — SQL injection (`IN` clause) | `PropertyFilterExtensions.BuildSqlWhereClause` now emits `@{col}_{filterIdx}_in_{valueIdx}` parameters for `IN` filters instead of inlining string literals. `AddParameters` updated to bind each value. 17 unit tests added at `tests/CosmoBase.Tests/Unit/Extensions/PropertyFilterExtensionsTests.cs`. |
 | 2026-05-24 | #2 — SQL injection (array query identifiers) | `CosmosValidationConstants` now exposes a compiled `SafePropertyNamePattern` regex (`^[a-zA-Z_][a-zA-Z0-9_.]*$`). `CosmosValidator.ValidateArrayPropertyQuery` validates both `arrayName` and `elementPropertyName` against this pattern before they are interpolated into SQL, rejecting anything containing spaces, quotes, semicolons, or other non-identifier characters. 35 unit tests added at `tests/CosmoBase.Tests/Unit/Validators/CosmosValidatorArrayQueryTests.cs`. |
+| 2026-05-24 | #3 — Polly registered but never used | Removed `TryAddSingleton` Polly registration and `using Polly;` from `ServiceCollectionExtensions.cs`. Removed `<PackageReference Include="Polly" />` from `CosmoBase.Core.csproj` and stale release note entry. 10 DI registration unit tests added at `tests/CosmoBase.Tests/Unit/DependencyInjection/ServiceRegistrationTests.cs`. |
 
 ---
 
@@ -57,19 +58,12 @@ Supporting separate read and write clients per model type is a real production n
 
 ---
 
-### 3. Polly is registered but never used
-**File:** `src/CosmoBase.DependencyInjection/ServiceCollectionExtensions.cs:167`
+### ~~3. Polly is registered but never used~~ ✅ Fixed
+**File:** `src/CosmoBase.DependencyInjection/ServiceCollectionExtensions.cs`
 
-A Polly retry policy is registered as a singleton in `AddCosmoBaseInternal`:
+~~A Polly retry policy is registered as a singleton in `AddCosmoBaseInternal` but `CosmosRepository` never injects or calls it.~~
 
-```csharp
-services.TryAddSingleton(_ =>
-    Policy.Handle<CosmosException>()
-        .WaitAndRetryAsync(3, i => TimeSpan.FromSeconds(Math.Pow(2, i)))
-);
-```
-
-`CosmosRepository` never injects or calls it. The Cosmos SDK already handles rate-limit retries via `MaxRetryAttemptsOnRateLimitedRequests`. Polly is dead weight here — either inject and use it, or remove it and the `Polly` package reference.
+**Fix:** Removed the `TryAddSingleton` Polly registration and `using Polly;` from `ServiceCollectionExtensions.cs`. Removed `<PackageReference Include="Polly" />` from `CosmoBase.Core.csproj` and the stale "Retry policies and resilience patterns" release note entry. Rate-limit retries are handled by the Cosmos SDK itself via `MaxRetryAttemptsOnRateLimitedRequests`. 10 DI registration unit tests added at `tests/CosmoBase.Tests/Unit/DependencyInjection/ServiceRegistrationTests.cs`, including one that explicitly asserts no Polly descriptor is present in the container.
 
 ---
 
@@ -213,9 +207,9 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 |---|---------|----------|--------|
 | 1 | SQL injection — `IN` clause values not parameterized | Security | ✅ Fixed |
 | 2 | SQL injection — array query names interpolated into SQL | Security | ✅ Fixed |
-| 3 | CI pipeline has no `dotnet test` step | Reliability | ⬜ Open |
-| 4 | Dead Newtonsoft.Json dependency | Cleanliness | ⬜ Open |
-| 5 | Polly registered but never used | Misleading | ⬜ Open |
+| 3 | Polly registered but never used | Misleading | ✅ Fixed |
+| 4 | CI pipeline has no `dotnet test` step | Reliability | ⬜ Open |
+| 5 | Dead Newtonsoft.Json dependency | Cleanliness | ⬜ Open |
 | 6 | Reflection on every write (not cached) | Performance | ⬜ Open |
 | 7 | `NotImplementedException` explicit interface implementations | Design | ⬜ Open |
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |

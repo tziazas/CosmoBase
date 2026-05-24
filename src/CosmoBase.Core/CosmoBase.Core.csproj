@@ -16,7 +16,6 @@
             - Automatic audit field management
             - High-performance bulk operations
             - Advanced querying with specifications
-            - Retry policies and resilience patterns
         </PackageReleaseNotes>
     </PropertyGroup>
 
@@ -38,9 +37,6 @@
         <PackageReference Include="Microsoft.Extensions.Options" />
         <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
         <PackageReference Include="Newtonsoft.Json" />
-
-        <!-- Resilience and Retry Policies -->
-        <PackageReference Include="Polly" />
 
         <!-- JSON Serialization (if needed for specific Cosmos scenarios) -->
         <PackageReference Include="System.Text.Json" />

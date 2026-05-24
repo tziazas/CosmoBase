@@ -111,11 +111,6 @@
         "resolved": "6.0.0",
         "contentHash": "hqTM5628jSsQiv+HGpiq3WKBl2c8v1KZfby2J6Pr7pEPlK9waPdgEO6b8A/+/xn/yZ9ulv8HuqK71ONy2tg67A=="
       },
-      "Polly.Core": {
-        "type": "Transitive",
-        "resolved": "8.6.1",
-        "contentHash": "HvkxFqEGk0NiLHYBescE/AnVu6W+ZqE0S7JkdXhvnJ2P2zRh8OPMDrFIjXPiIWugWIoxVeBHt45a6Cr61+asXw=="
-      },
       "runtime.debian.8-x64.runtime.native.System.Security.Cryptography.OpenSsl": {
         "type": "Transitive",
         "resolved": "4.3.2",
@@ -769,7 +764,7 @@
       "cosmobase.core": {
         "type": "Project",
         "dependencies": {
-          "CosmoBase.Abstractions": "[1.0.0-preview, )",
+          "CosmoBase.Abstractions": "[0.1.0, )",
           "Microsoft.Azure.Cosmos": "[3.52.0, )",
           "Microsoft.Extensions.Caching.Memory": "[9.0.6, )",
           "Microsoft.Extensions.Configuration.Abstractions": "[9.0.6, )",
@@ -778,15 +773,14 @@
           "Microsoft.Extensions.Options": "[9.0.6, )",
           "Microsoft.Extensions.Options.DataAnnotations": "[9.0.6, )",
           "Newtonsoft.Json": "[13.0.3, )",
-          "Polly": "[8.6.1, )",
           "System.Text.Json": "[9.0.0, )"
         }
       },
       "cosmobase.dataservices": {
         "type": "Project",
         "dependencies": {
-          "CosmoBase.Abstractions": "[1.0.0-preview, )",
-          "CosmoBase.Core": "[1.0.0-preview, )"
+          "CosmoBase.Abstractions": "[0.1.0, )",
+          "CosmoBase.Core": "[0.1.0, )"
         }
       },
       "Microsoft.Azure.Cosmos": {
@@ -839,15 +833,6 @@
         "requested": "[13.0.3, )",
         "resolved": "13.0.3",
         "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
-      },
-      "Polly": {
-        "type": "CentralTransitive",
-        "requested": "[8.6.1, )",
-        "resolved": "8.6.1",
-        "contentHash": "UMYpEiKPQhbiQY1NXKL0hssUMETjuv7RGZx2VlcrlaIL7bIs2vs7iBfH2gblcR5Q7ockW3Kc78uTY6kK/ZeYgg==",
-        "dependencies": {
-          "Polly.Core": "8.6.1"
-        }
       },
       "System.Text.Json": {
         "type": "CentralTransitive",
