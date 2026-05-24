@@ -497,13 +497,4 @@ public class CosmosDataReadService<TDto, TDao> : ICosmosDataReadService<TDto, TD
         }
     }
 
-    /// <inheritdoc />
-    public Task<TDto> GetByIdAsync(string id, CancellationToken cancellationToken)
-    {
-        _logger?.LogWarning("Attempted to call unsupported GetByIdAsync method with ID only: {DocumentId}", id);
-        throw new CosmoBaseException(
-            $"Cosmos DB operations require both document ID and partition key. " +
-            $"Use GetByIdAsync(string id, string partitionKey, bool includeDeleted) instead. " +
-            $"Document ID: {id}");
-    }
 }

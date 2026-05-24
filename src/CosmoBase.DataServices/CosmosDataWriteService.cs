@@ -81,14 +81,6 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto, 
         }
     }
 
-    Task<TDto?> IDataWriteService<TDto, string>.CreateAsync(TDto entity,
-        CancellationToken cancellationToken)
-    {
-        throw new NotImplementedException(
-            "This operation is not implemented for this type. " +
-            "Use ICosmosDataWriteService<TDto, TDao>.CreateAsync instead.");
-    }
-
     /// <inheritdoc />
     public async Task<TDto> ReplaceAsync(
         TDto entity,
@@ -437,16 +429,6 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto, 
             _logger?.LogError(ex, "Unexpected error deleting document {DocumentId}", id);
             throw new CosmoBaseException($"Unexpected error during document deletion: {ex.Message}", ex);
         }
-    }
-
-    Task<bool> IDataWriteService<TDto, string>.DeleteAsync(
-        string id,
-        CancellationToken cancellationToken)
-    {
-        // either throw to force the new method:
-        throw new CosmoBaseException(
-            "Cosmos DB deletes require both id & partition key. " +
-            "Use DeleteDocumentAsync(id, partitionKey, deleteOptions) instead.");
     }
 
     #endregion

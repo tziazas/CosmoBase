@@ -21,7 +21,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// and detailed telemetry for monitoring and debugging. Bulk operations are optimized for high
 /// throughput with configurable parallelism and batch sizing.
 /// </remarks>
-public interface ICosmosDataWriteService<TDto, TDao> : IDataWriteService<TDto, string> // Here we use string because that is the key
+public interface ICosmosDataWriteService<TDto, TDao>
     where TDto : class
     where TDao : ICosmosDataModel
 {
@@ -55,7 +55,7 @@ public interface ICosmosDataWriteService<TDto, TDao> : IDataWriteService<TDto, s
     /// - Automatic retry for transient failures
     /// - Request unit consumption logged for cost monitoring
     /// </remarks>
-    new Task<TDto> CreateAsync(TDto document, CancellationToken cancellationToken = default);
+    Task<TDto> CreateAsync(TDto document, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Replaces an existing document with intelligent audit field management.
@@ -127,7 +127,7 @@ public interface ICosmosDataWriteService<TDto, TDao> : IDataWriteService<TDto, s
     /// - Automatic retry for transient failures
     /// - Cache invalidation only occurs for actual creates (HTTP 201)
     /// </remarks>
-    new Task<TDto> UpsertAsync(TDto document, CancellationToken cancellationToken = default);
+    Task<TDto> UpsertAsync(TDto document, CancellationToken cancellationToken = default);
 
     #endregion
 

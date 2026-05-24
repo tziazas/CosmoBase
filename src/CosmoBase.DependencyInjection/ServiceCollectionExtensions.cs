@@ -175,8 +175,6 @@ public static class ServiceCollectionExtensions
 
         // H) Repositories & DataServices
         services.TryAddScoped(typeof(ICosmosRepository<>), typeof(CosmosRepository<>));
-        services.TryAddScoped(typeof(IDataReadService<,>), typeof(CosmosDataReadService<,>));
-        services.TryAddScoped(typeof(IDataWriteService<,>), typeof(CosmosDataWriteService<,>));
         services.TryAddScoped(typeof(ICosmosDataReadService<,>), typeof(CosmosDataReadService<,>));
         services.TryAddScoped(typeof(ICosmosDataWriteService<,>), typeof(CosmosDataWriteService<,>));
 

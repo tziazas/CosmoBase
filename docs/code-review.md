@@ -11,6 +11,7 @@
 | 2026-05-24 | #2 — SQL injection (array query identifiers) | `CosmosValidationConstants` now exposes a compiled `SafePropertyNamePattern` regex (`^[a-zA-Z_][a-zA-Z0-9_.]*$`). `CosmosValidator.ValidateArrayPropertyQuery` validates both `arrayName` and `elementPropertyName` against this pattern before they are interpolated into SQL, rejecting anything containing spaces, quotes, semicolons, or other non-identifier characters. 35 unit tests added at `tests/CosmoBase.Tests/Unit/Validators/CosmosValidatorArrayQueryTests.cs`. |
 | 2026-05-24 | #3 — Polly registered but never used | Removed `TryAddSingleton` Polly registration and `using Polly;` from `ServiceCollectionExtensions.cs`. Removed `<PackageReference Include="Polly" />` from `CosmoBase.Core.csproj` and stale release note entry. 10 DI registration unit tests added at `tests/CosmoBase.Tests/Unit/DependencyInjection/ServiceRegistrationTests.cs`. |
 | 2026-05-24 | #4 — CI pipeline had no test step | Restructured `.github/workflows/publish.yml` into two jobs: `test` (unit + integration, uploads `.trx` results) and `publish` (`needs: test`). Replaced verbose per-project restore/build with `dotnet build CosmoBase.sln`. |
+| 2026-05-24 | #5 — `NotImplementedException` from explicit interface implementations | Removed `IDataWriteService<TDto, string>` and `IDataReadService<TDto, string>` from the inheritance chains of `ICosmosDataWriteService` and `ICosmosDataReadService`. Removed the three explicit throwing implementations (`IDataWriteService.CreateAsync`, `IDataWriteService.DeleteAsync`, `IDataReadService.GetByIdAsync`). Removed `new` modifier from `CreateAsync`, `UpsertAsync`, `GetAllAsync`, and `QueryAsync` in the Cosmos interfaces. Removed `IDataReadService<,>` and `IDataWriteService<,>` open-generic DI registrations from `ServiceCollectionExtensions.cs`. |
 
 ---
 
@@ -77,12 +78,17 @@ Supporting separate read and write clients per model type is a real production n
 
 ---
 
-### 5. `NotImplementedException` thrown from explicit interface implementations
+### ~~5. `NotImplementedException` thrown from explicit interface implementations~~ ✅ Fixed
 **Files:**
-- `src/CosmoBase.DataServices/CosmosDataWriteService.cs:84`, `:442`
-- `src/CosmoBase.DataServices/CosmosDataReadService.cs:501`
+- `src/CosmoBase.Abstractions/Interfaces/ICosmosDataWriteService.cs`
+- `src/CosmoBase.Abstractions/Interfaces/ICosmosDataReadService.cs`
+- `src/CosmoBase.DataServices/CosmosDataWriteService.cs`
+- `src/CosmoBase.DataServices/CosmosDataReadService.cs`
+- `src/CosmoBase.DependencyInjection/ServiceCollectionExtensions.cs`
 
-`CosmosDataWriteService` and `CosmosDataReadService` explicitly implement base interface methods (`IDataWriteService<TDto,string>.CreateAsync`, `DeleteAsync`, `IDataReadService<TDto,string>.GetByIdAsync`) by throwing exceptions at runtime. If the base interface contract can never be correctly fulfilled, the inheritance hierarchy is wrong and those base interfaces should not be in the hierarchy.
+~~`CosmosDataWriteService` and `CosmosDataReadService` explicitly implement base interface methods (`IDataWriteService<TDto,string>.CreateAsync`, `DeleteAsync`, `IDataReadService<TDto,string>.GetByIdAsync`) by throwing exceptions at runtime. If the base interface contract can never be correctly fulfilled, the inheritance hierarchy is wrong and those base interfaces should not be in the hierarchy.~~
+
+**Fix:** Removed `: IDataWriteService<TDto, string>` and `: IDataReadService<TDto, string>` from the two Cosmos interface declarations. Removed the `new` modifier from the re-declared methods (`CreateAsync`, `UpsertAsync`, `GetAllAsync`, `QueryAsync`). Removed the three explicit throwing implementations from the service classes. Removed the `IDataReadService<,>` and `IDataWriteService<,>` open-generic DI registrations — consumers should always resolve the Cosmos-specific interfaces directly.
 
 ---
 
@@ -214,7 +220,7 @@ Both methods cast `ISpecification<TDto>` to `SqlSpecification<TDto>` internally 
 | 4 | CI pipeline has no `dotnet test` step | Reliability | ✅ Fixed |
 | 5 | Dead Newtonsoft.Json dependency | Cleanliness | ⬜ Open |
 | 6 | Reflection on every write (not cached) | Performance | ⬜ Open |
-| 7 | `NotImplementedException` explicit interface implementations | Design | ⬜ Open |
+| 7 | `NotImplementedException` explicit interface implementations | Design | ✅ Fixed |
 | 8 | Manual cache expiry duplicates `IMemoryCache` | Complexity | ⬜ Open |
 | 9 | `_disposed` dead code | Dead code | ⬜ Open |
 | 10 | `new()` constraint not on interface | Design | ⬜ Open |

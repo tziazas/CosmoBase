@@ -19,8 +19,7 @@ namespace CosmoBase.Abstractions.Interfaces;
 /// All query operations respect the soft delete pattern and include comprehensive error handling,
 /// logging, and telemetry for production monitoring and debugging.
 /// </remarks>
-public interface
-    ICosmosDataReadService<TDto, TDao> : IDataReadService<TDto, string> // Here we use string because that is the key
+public interface ICosmosDataReadService<TDto, TDao>
     where TDto : class
     where TDao : ICosmosDataModel
 {
@@ -91,7 +90,7 @@ public interface
     /// </summary>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents that can be consumed with await foreach.</returns>
-    new IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default);
+    IAsyncEnumerable<TDto> GetAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streams all non-deleted documents within a specific partition asynchronously.
@@ -121,7 +120,7 @@ public interface
     /// </param>
     /// <param name="cancellationToken">Token to cancel the async stream.</param>
     /// <returns>An async stream of documents matching the specification criteria.</returns>
-    new IAsyncEnumerable<TDto> QueryAsync(ISpecification<TDto> specification,
+    IAsyncEnumerable<TDto> QueryAsync(ISpecification<TDto> specification,
         CancellationToken cancellationToken = default);
 
     /// <summary>
