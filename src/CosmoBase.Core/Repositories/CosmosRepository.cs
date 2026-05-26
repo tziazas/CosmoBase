@@ -723,23 +723,21 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
 
         _validator.ValidatePropertyFilters(filterList);
 
-        // Build SQL + parameters from the property filters
-        var sql = filterList.BuildSqlWhereClause();
+        // Build WHERE-clause conditions from the property filters
+        var whereClause = filterList.BuildSqlWhereClause();
 
-        // Add soft delete filter if needed
+        // Append soft-delete predicate when required
         if (!includeDeleted)
         {
-            // If there are existing filters, combine with AND
-            if (filterList.Any())
-            {
-                sql += " AND c.Deleted = false";
-            }
-            else
-            {
-                // No other filters, just the soft delete filter
-                sql = "SELECT * FROM c WHERE c.Deleted = false";
-            }
+            whereClause = filterList.Any()
+                ? $"{whereClause} AND c.Deleted = false"
+                : "c.Deleted = false";
         }
+
+        // Compose the full SQL statement
+        var sql = whereClause is "1=1" or ""
+            ? "SELECT * FROM c"
+            : $"SELECT * FROM c WHERE {whereClause}";
 
         var def = new QueryDefinition(sql);
         filterList.AddParameters(def);
