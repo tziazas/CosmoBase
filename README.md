@@ -826,9 +826,47 @@ Contributions, issues, and feature requests are welcome. Please open an issue or
 ### Development Setup
 
 1. Clone the repository
-2. Install the .NET 9 SDK
+2. Install the [.NET 9 SDK](https://dotnet.microsoft.com/download)
 3. Run `dotnet build` to verify the solution builds
-4. Run `dotnet test` — unit tests run without external dependencies; integration tests use [Testcontainers.CosmosDb](https://dotnet.testcontainers.org/) and require Docker
+
+#### Running Tests
+
+The test suite is split into two tiers:
+
+**Unit tests** — no external dependencies, run anywhere:
+
+```bash
+dotnet test --filter "FullyQualifiedName~.Unit."
+```
+
+**Integration tests** — require [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or any Docker-compatible runtime) to be **running**. On first run the Cosmos DB emulator image (~2 GB) is pulled automatically:
+
+```bash
+dotnet test --filter "FullyQualifiedName~.Integration."
+```
+
+Running `dotnet test` without a filter runs both tiers and therefore also requires Docker.
+
+> **How it works:** when no `localsettings.json` override is present the fixture detects this and starts the Cosmos emulator in a container via [Testcontainers.CosmosDb](https://dotnet.testcontainers.org/). This is the path taken on GitHub Actions (`ubuntu-latest` includes Docker) and on fresh clones.
+
+#### Testing Against a Real Cosmos Endpoint (Optional)
+
+If you have access to a Cosmos DB account or local emulator, create `tests/CosmoBase.Tests/localsettings.json` (it is gitignored):
+
+```json
+{
+  "CosmoBase": {
+    "CosmosClientConfigurations": [
+      {
+        "Name": "TestPrimary",
+        "ConnectionString": "<your-connection-string>"
+      }
+    ]
+  }
+}
+```
+
+When this file is present the fixture uses it directly and Docker is not required for integration tests.
 
 ### Contribution Guidelines
 
