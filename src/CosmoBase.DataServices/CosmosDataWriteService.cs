@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Text.Json.Serialization;
 using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
@@ -44,6 +46,26 @@ public class CosmosDataWriteService<TDto, TDao> : ICosmosDataWriteService<TDto, 
         _cosmosRepository = cosmosRepository ?? throw new ArgumentNullException(nameof(cosmosRepository));
         _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
         _logger = logger;
+
+        // Fail at service construction — not at the first write call — so misconfigured
+        // write models are caught as early as possible (first DI scope resolution).
+        EnsurePartitionKeyProperty(cosmosRepository.PartitionKeyProperty);
+    }
+
+    private static void EnsurePartitionKeyProperty(string partitionKeyProperty)
+    {
+        var type = typeof(TDao);
+        var found = type.GetProperty(partitionKeyProperty) != null
+            || type.GetProperties().Any(p =>
+                p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name == partitionKeyProperty);
+
+        if (!found)
+            throw new CosmosConfigurationException(
+                $"'{type.Name}' is registered as a write model but has no property that maps to " +
+                $"partition key '{partitionKeyProperty}'. " +
+                $"Add the property to the DAO, or annotate the matching field with " +
+                $"[JsonPropertyName(\"{partitionKeyProperty}\")]. " +
+                $"If this model is read-only, inject ICosmosDataReadService instead.");
     }
 
     #region Single Document Operations

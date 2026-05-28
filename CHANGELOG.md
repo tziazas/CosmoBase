@@ -7,6 +7,40 @@ CosmoBase uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.2] — 2026-05-27
+
+### Fixed
+
+- **Partition key property no longer required on read-only DAO models.** Prior to this release,
+  registering a DAO that omitted the partition key property caused a startup failure (repository
+  constructor threw `ArgumentException` from `Expression.Property`). Read-only summary/projection
+  models — which never perform writes and therefore never need to extract a partition key value
+  from an instance — now register and query without error. Write operations still enforce the
+  requirement and throw `CosmosConfigurationException` with a clear actionable message.
+
+- **`PartitionKey` configuration now accepts the Cosmos JSON field name.** Previously, the value
+  in `appsettings.json` had to exactly match the C# property name on the DAO class. If the
+  property was decorated with `[JsonPropertyName("btLockboxNumber")]` (C# name `Lockbox`), the
+  config required `"Lockbox"`, not `"btLockboxNumber"`, which was inconsistent with how Cosmos DB
+  stores and queries the field. Both `BuildPartitionKeyAccessor` (repository) and
+  `GetPartitionKeyValue` (validator) now perform a two-step lookup: C# property name first, then
+  a scan for a `[JsonPropertyName]` attribute match. SQL queries continue to use the configured
+  value as-is (already the correct Cosmos JSON path).
+
+### Added
+
+- **`ICosmosRepository<T>.PartitionKeyProperty`** — new read-only property exposing the
+  configured partition key name. Used by `CosmosDataWriteService` for construction-time
+  validation; also available to callers who need to inspect the configuration at runtime.
+
+- **Write-service construction-time validation.** `CosmosDataWriteService<TDto, TDao>` now
+  validates at construction that `TDao` exposes the configured partition key property (by C#
+  name or `[JsonPropertyName]`). This preserves fail-fast semantics for write models:
+  misconfiguration surfaces on the first DI scope resolution rather than on the first actual
+  write call.
+
+---
+
 ## [1.0.1] — 2026-05-25
 
 ### Fixed
