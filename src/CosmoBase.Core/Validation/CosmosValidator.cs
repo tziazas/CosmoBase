@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using System.Text.Json.Serialization;
 using CosmoBase.Abstractions.Exceptions;
 using CosmoBase.Abstractions.Filters;
 using CosmoBase.Abstractions.Interfaces;
@@ -17,35 +19,37 @@ public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDa
     public void ValidateModelConfiguration(string partitionKeyProperty)
     {
         var modelType = typeof(T);
-        
-        // 1. Validate partition key property exists
-        var partitionKeyProp = modelType.GetProperty(partitionKeyProperty);
-        if (partitionKeyProp == null)
-        {
-            var availableProps = string.Join(", ", modelType.GetProperties().Select(p => p.Name));
-            var message = $"Partition key property '{partitionKeyProperty}' not found on type '{modelType.Name}'. " +
-                         $"Available properties: {availableProps}";
-            throw new CosmosConfigurationException(message);
-        }
 
-        // 2. Validate partition key property type is supported
-        if (!CosmosValidationConstants.SupportedPartitionKeyTypes.Contains(partitionKeyProp.PropertyType))
-        {
-            var supportedTypeNames = CosmosValidationConstants.SupportedPartitionKeyTypes.Select(t => t.Name);
-            var message = $"Partition key property '{partitionKeyProperty}' on type '{modelType.Name}' " +
-                         $"has unsupported type '{partitionKeyProp.PropertyType.Name}'. " +
-                         $"Supported types: {string.Join(", ", supportedTypeNames)}";
-            throw new CosmosConfigurationException(message);
-        }
+        // Resolve the partition key property via two-step lookup:
+        //   1. C# property name
+        //   2. [JsonPropertyName] attribute value (supports JSON-name config)
+        // Property is optional — read-only models may omit it entirely.
+        var partitionKeyProp = modelType.GetProperty(partitionKeyProperty)
+            ?? modelType.GetProperties()
+                .FirstOrDefault(p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name == partitionKeyProperty);
 
-        // 3. Validate partition key property is readable
-        if (!partitionKeyProp.CanRead)
+        if (partitionKeyProp != null)
         {
-            var message = $"Partition key property '{partitionKeyProperty}' on type '{modelType.Name}' is not readable";
-            throw new CosmosConfigurationException(message);
-        }
+            // Validate type is supported when property is present
+            if (!CosmosValidationConstants.SupportedPartitionKeyTypes.Contains(partitionKeyProp.PropertyType))
+            {
+                var supportedTypeNames = CosmosValidationConstants.SupportedPartitionKeyTypes.Select(t => t.Name);
+                var message = $"Partition key property '{partitionKeyProperty}' on type '{modelType.Name}' " +
+                             $"has unsupported type '{partitionKeyProp.PropertyType.Name}'. " +
+                             $"Supported types: {string.Join(", ", supportedTypeNames)}";
+                throw new CosmosConfigurationException(message);
+            }
 
-        // 4. Validate required ICosmosDataModel properties exist
+            if (!partitionKeyProp.CanRead)
+            {
+                var message = $"Partition key property '{partitionKeyProperty}' on type '{modelType.Name}' is not readable";
+                throw new CosmosConfigurationException(message);
+            }
+        }
+        // No throw when property is absent — read-only models are valid without it.
+        // Write operations enforce presence via CosmosDataWriteService and GetPartitionKeyValue.
+
+        // Always validate required ICosmosDataModel properties
         ValidateRequiredProperties(modelType);
     }
 
@@ -306,15 +310,27 @@ public class CosmosValidator<T> : ICosmosValidator<T> where T : class, ICosmosDa
 
     /// <summary>
     /// Reads the partition key value from an item using reflection.
+    /// Resolves via C# property name first, then <see cref="JsonPropertyNameAttribute"/> scan.
     /// </summary>
     private static string GetPartitionKeyValue(T item, string partitionKeyProperty)
     {
-        var prop = typeof(T).GetProperty(partitionKeyProperty)
-                   ?? throw new InvalidOperationException(
-                       $"Partition-key property '{partitionKeyProperty}' not found on type '{typeof(T).Name}'");
+        var type = typeof(T);
+
+        // Step 1: C# property name
+        var prop = type.GetProperty(partitionKeyProperty);
+
+        // Step 2: [JsonPropertyName] attribute match
+        prop ??= type.GetProperties()
+            .FirstOrDefault(p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name == partitionKeyProperty);
+
+        if (prop is null)
+            throw new InvalidOperationException(
+                $"Partition-key property '{partitionKeyProperty}' not found on type '{type.Name}' " +
+                $"by C# name or [JsonPropertyName] attribute");
+
         var raw = prop.GetValue(item)
                   ?? throw new InvalidOperationException(
-                      $"Partition-key value for '{partitionKeyProperty}' on '{typeof(T).Name}' was null");
+                      $"Partition-key value for '{partitionKeyProperty}' on '{type.Name}' was null");
         return raw.ToString()!;
     }
 

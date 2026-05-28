@@ -29,6 +29,12 @@ public interface ICosmosRepository<T>
     where T : class, ICosmosDataModel
 {
     /// <summary>
+    /// The partition key property name as configured (Cosmos JSON field name or C# property name).
+    /// Used by write services to validate at construction time that the DAO type is write-capable.
+    /// </summary>
+    string PartitionKeyProperty { get; }
+
+    /// <summary>
     /// Exposes an <see cref="IQueryable"/> over the container for custom LINQ queries.
     /// </summary>
     IQueryable<T> Queryable { get; }

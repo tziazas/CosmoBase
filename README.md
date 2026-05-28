@@ -191,7 +191,8 @@ In `appsettings.json`:
 
 > **Common pitfalls:**
 > - `ModelName` must match the DAO class name exactly — `"ProductDao"`, not `"Product"`
-> - `PartitionKey` is the property name on your DAO class — `"Category"`, not `"/category"`
+> - `PartitionKey` accepts either the **Cosmos JSON field name** or the **C# property name**. If your DAO uses `[JsonPropertyName("btLockboxNumber")] public string? Lockbox { get; set; }`, you may use either `"btLockboxNumber"` or `"Lockbox"` in config — both resolve correctly. Do **not** include the leading `/` (e.g. `"Category"`, not `"/category"`).
+> - Read-only summary models that aggregate across a collection do not need to include the partition key property — omit it freely and CosmoBase will not require it at startup or query time.
 
 ---
 

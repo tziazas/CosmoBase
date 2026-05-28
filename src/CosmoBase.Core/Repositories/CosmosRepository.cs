@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Net;
+using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
 using CosmoBase.Abstractions.Configuration;
 using CosmoBase.Abstractions.Enums;
 using CosmoBase.Abstractions.Exceptions;
@@ -34,19 +36,14 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     private readonly IAuditFieldManager<T> _auditFieldManager;
 
     // Compiled delegate that reads the partition-key property from a T instance.
+    // Null when the DAO type does not expose the partition key property — valid for
+    // read-only models.  Write operations call GetPartitionKeyValue(), which throws
+    // a clear error if the delegate is null, so misconfigured write models are caught
+    // at the first write call rather than silently at query time.
     //
-    // Why a compiled expression instead of typeof(T).GetProperty(...).GetValue(...)?
-    // GetProperty() does a dictionary lookup in the type's metadata on every call.
-    // GetValue() boxes the result and dispatches through the reflection invoke path.
-    // Both costs add up when CreateAsync / ReplaceAsync / UpsertAsync are called at
-    // high throughput.
-    //
-    // Expression.Lambda<Func<T, string>>(...).Compile() emits a real CLR method once
-    // at construction time.  Every subsequent call is a direct property read — the same
-    // cost as writing `item.Category` in source code — with no reflection overhead at
-    // all.  The delegate is stored in a readonly field so it is thread-safe by
-    // construction and shared across all calls on this repository instance.
-    private readonly Func<T, string> _getPartitionKey;
+    // The delegate is compiled once at construction from an expression tree, so every
+    // subsequent call is a direct property read with no reflection overhead.
+    private readonly Func<T, string>? _getPartitionKey;
 
     /// <summary>
     /// Initializes a new instance using <paramref name="configuration"/> to locate containers and <paramref name="cosmosClients"/> for database access.
@@ -102,11 +99,14 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
         _writeContainer = _writeClient
             .GetContainer(modelConfig.DatabaseName, modelConfig.CollectionName);
 
-        // Build the compiled partition-key accessor now that _partitionKeyProperty is known.
-        // Fail fast here (constructor) rather than on the first write so misconfigured
-        // model names surface at startup rather than at runtime.
+        // Build the compiled accessor. Returns null when the DAO type does not expose the
+        // partition key property — this is valid for read-only models.  Write operations
+        // (CreateAsync, ReplaceAsync, etc.) call GetPartitionKeyValue(), which throws if null.
         _getPartitionKey = BuildPartitionKeyAccessor(_partitionKeyProperty);
     }
+
+    /// <inheritdoc/>
+    public string PartitionKeyProperty => _partitionKeyProperty;
 
     /// <inheritdoc/>
     public IQueryable<T> Queryable => _readContainer.GetItemLinqQueryable<T>(true);
@@ -920,11 +920,19 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <summary>
-    /// Returns the partition-key value for <paramref name="item"/> using the pre-compiled
-    /// delegate.  Call cost is identical to a direct property access.
+    /// Returns the partition-key value for <paramref name="item"/> using the pre-compiled delegate.
+    /// Throws <see cref="CosmosConfigurationException"/> when the DAO type does not expose the
+    /// partition key property — indicates a write service was used with a read-only model.
     /// </summary>
     private string GetPartitionKeyValue(T item)
     {
+        if (_getPartitionKey is null)
+            throw new CosmosConfigurationException(
+                $"'{typeof(T).Name}' does not have a property that maps to partition key " +
+                $"'{_partitionKeyProperty}'. Write operations require the partition key property. " +
+                $"Add the property to the DAO or use [JsonPropertyName(\"{_partitionKeyProperty}\")] " +
+                $"on the matching field. If this model is read-only, use ICosmosDataReadService instead.");
+
         var value = _getPartitionKey(item);
         if (value is null)
             throw new InvalidOperationException(
@@ -933,29 +941,37 @@ public class CosmosRepository<T> : ICosmosRepository<T> where T : class, ICosmos
     }
 
     /// <summary>
-    /// Builds a compiled <see cref="Func{T, String}"/> that reads the named property from
-    /// an instance of <typeparamref name="T"/> without reflection overhead at call time.
+    /// Builds a compiled <see cref="Func{T, String}"/> that reads the partition-key property
+    /// from an instance of <typeparamref name="T"/> without reflection overhead at call time.
+    /// Returns <c>null</c> when the property cannot be resolved — valid for read-only models.
     /// </summary>
     /// <remarks>
-    /// The expression tree produced is equivalent to: <c>item => item.{propertyName}.ToString()</c>
-    ///
-    /// Step-by-step:
-    ///   1. <c>Expression.Parameter</c> declares the lambda's input parameter ("item").
-    ///   2. <c>Expression.Property</c> emits a member-access node for the named property.
-    ///      This validates that the property exists on T and throws here (construction time)
-    ///      rather than on the first write if the configuration is wrong.
-    ///   3. <c>Expression.Call</c> wraps the property access in a ToString() call so
-    ///      the lambda always returns string regardless of the underlying property type
-    ///      (string, Guid, int, etc.).
-    ///   4. <c>Expression.Lambda&lt;TDelegate&gt;</c> packages nodes 1–3 into a typed lambda.
-    ///   5. <c>.Compile()</c> JIT-compiles the expression tree into a real CLR delegate.
-    ///      This is the only expensive step and happens exactly once per repository instance.
+    /// Resolution is a two-step lookup (done once at construction):
+    ///   1. Try <paramref name="propertyName"/> as a C# property name directly.
+    ///   2. If not found, scan for a property decorated with
+    ///      <c>[JsonPropertyName("<paramref name="propertyName"/>")]</c>.
+    ///      This supports configurations where the Cosmos JSON field name (e.g. "btLockboxNumber")
+    ///      differs from the C# property name (e.g. "Lockbox").
+    /// If neither lookup succeeds, returns <c>null</c>; no exception is thrown here so that
+    /// read-only models can register and query without a partition key property on the DAO.
     /// </remarks>
-    private static Func<T, string> BuildPartitionKeyAccessor(string propertyName)
+    private static Func<T, string>? BuildPartitionKeyAccessor(string propertyName)
     {
-        var param    = Expression.Parameter(typeof(T), "item");
-        var property = Expression.Property(param, propertyName); // throws ArgumentException if not found
-        var toString = Expression.Call(property, nameof(object.ToString), Type.EmptyTypes);
+        var type = typeof(T);
+
+        // Step 1: exact C# property name
+        var prop = type.GetProperty(propertyName);
+
+        // Step 2: scan for [JsonPropertyName] attribute whose value matches
+        prop ??= type.GetProperties()
+            .FirstOrDefault(p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name == propertyName);
+
+        if (prop is null)
+            return null;
+
+        var param    = Expression.Parameter(type, "item");
+        var access   = Expression.Property(param, prop);
+        var toString = Expression.Call(access, nameof(object.ToString), Type.EmptyTypes);
         return Expression.Lambda<Func<T, string>>(toString, param).Compile();
     }
 
